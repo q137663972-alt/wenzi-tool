@@ -139,3 +139,60 @@ git -c "http.extraHeader=Authorization: Basic $AUTH" \
 
 桌面浏览器直接打开 `web/index.html` 即可看界面（无桥接时自动走离线引擎）。
 要测真·大模型，需在有 Android 桥接的 WebView 环境（即编译后的 App）中运行。
+
+---
+
+## 九、本机构建与签名（2026-10 实际跑通）
+
+### 9.1 环境
+
+| 组件 | 版本 | 备注 |
+|---|---|---|
+| JDK | 17+（实测 Zulu 20 可用） | AGP 8.1.4 要求 17 起 |
+| Gradle | 8.2 | wrapper 指向腾讯镜像；`gradlew` 已修好 JVM 参数 |
+| AGP | 8.1.4 | 顶层 `build.gradle` 显式声明 |
+| build-tools | 34.0.0 | `app/build.gradle` 里 `buildToolsVersion "34.0.0"` 固定 |
+| compileSdk / targetSdk | 34 | minSdk 21（安卓 5.0 起） |
+
+装好 Android SDK 后：
+
+```bash
+export ANDROID_HOME=/path/to/android-sdk
+/opt/gradle/gradle-8.2/bin/gradle :app:assembleRelease   # 或 ./gradlew
+node tools/gen-pack.mjs                                   # 生成热更包到 docs/
+```
+
+### 9.2 签名
+
+| 项 | 值 |
+|---|---|
+| keystore | `keystore/wenzi.jks`（PKCS12，**已 gitignore，单独备份**） |
+| 别名 / 密码 | `wenzi` / `wenzi2026` |
+| 有效期 | 2026-10 → 2056-10（30 年） |
+| 证书 SHA-1 | `E2:9C:68:39:9A:B3:2F:2C:78:8B:03:97:4B:7B:9D:3C:29:EA:E4:27` |
+| 证书 SHA-256 | `BA:94:6E:C1:72:A5:C1:87:6B:18:57:7F:57:1D:0A:7D:A0:B4:A1:87:55:9C:B2:1D:E6:7D:DA:FC:75:17:91:F4` |
+
+> ⚠️ **同一枚证书的后续版本才能覆盖安装。** 换了证书就必须先卸载再装。keystore 丢了就再也发不了「升级版」。
+
+### 9.3 2026-10 修掉的编译/运行问题（原仓库源码直接编译会失败）
+
+| # | 问题 | 修法 |
+|---|---|---|
+| 1 | `readStream()` 返回 `String`，被赋给 `byte[]`（2 处） | 拆出 `readBytes()` 返回 `byte[]` |
+| 2 | `getEnabledModels()` / `doLLM()` 里 `JSONObject.put` 抛 `JSONException` 未捕获（4 处） | 包 `try/catch`，错误串转义后回传 |
+| 3 | 主题父类 `Theme.MaterialComponents.NoActionBar` 找不到（没引 material 依赖） | 改 `Theme.AppCompat.NoActionBar` |
+| 4 | 缺 `android.useAndroidX=true` | 新建 `gradle.properties` |
+| 5 | 未声明 AGP 版本 | 顶层 `plugins { id 'com.android.application' version '8.1.4' apply false }` |
+| 6 | 默认要 build-tools 33.0.1 | 显式 `buildToolsVersion "34.0.0"` |
+| 7 | `android:icon="@android:drawable/ic_menu_edit"` 打包后解析失败 | 换成自带 `@mipmap/ic_launcher` |
+| 8 | 只有 `hot_base` 单源，github.io 被墙就永远拉不到更新 | 新增 `hot_mirror`（jsDelivr），主源失败自动切 |
+
+### 9.4 推送（照第七节）
+
+```bash
+TOKEN=$(cat /path/to/token_file)
+git -c http.extraHeader="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)" \
+    push "https://ghproxy.net/https://github.com/q137663972-alt/wenzi-tool.git" HEAD:main
+```
+
+本文档最后一次验证：`adcce77..46f3585` 推送成功，Pages 热更包 sha256 与本地逐字节一致。
