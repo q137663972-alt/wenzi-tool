@@ -16,7 +16,8 @@ import { createHash } from 'node:crypto';
 
 const ROOT = dirname(fileURLToPath(import.meta.url)) + sep + '..';
 const SRC = join(ROOT, 'web');
-const OUT = join(ROOT, 'hot');
+// 直接产出到 docs/：GitHub Pages 设为 main 分支 /docs 即可访问
+const OUT = join(ROOT, 'docs');
 const PACK_DIR = join(OUT, 'pack');
 
 function walk(dir) {
@@ -135,4 +136,4 @@ const update = {
 writeFileSync(join(OUT, 'update.json'), JSON.stringify(update, null, 2));
 
 console.log(`build=${build}  zip=${codeName} (${codeZip.length} bytes) sha256=${sha}`);
-console.log('已双发到 hot/ 根 与 hot/pack/');
+console.log('已双发到 docs/ 根 与 docs/pack/');

@@ -1,0 +1,8 @@
+{
+  "min_apk": 1,
+  "app": "1.0.0",
+  "sig": "local",
+  "build": "70171835ad6172a0",
+  "ts": "2026-10-26T10:35:25.620Z",
+  "manifest": "pack/manifest.json"
+}
