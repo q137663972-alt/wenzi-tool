@@ -10,3 +10,6 @@ app/release/
 
 # 构建产物
 build/
+
+# 该文件需要 token 有 workflow 权限才能推；无权限时本地保留即可
+.github/workflows/
