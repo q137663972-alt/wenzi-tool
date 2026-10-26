@@ -1,12 +1,20 @@
 package com.wenzigongju;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
+import android.content.ClipData;
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.webkit.JavascriptInterface;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -53,6 +61,13 @@ public class MainActivity extends AppCompatActivity {
     private static final String TAG = "WenziTool";
     private WebView webView;
     private final Handler ui = new Handler(Looper.getMainLooper());
+
+    // ---- 图片选择（贴聊天截图）----
+    private static final int REQ_PICK_FILE = 1001;
+    private static final int REQ_PERM_MEDIA = 1002;
+    private ValueCallback<Uri[]> mFileCallback;   // H5 的 <input type=file> 回调
+    private ValueCallback<Uri[]> mPendingCb;      // 等权限结果时暂存
+    private boolean mAllowMultiple = false;
     private JSONObject appConfig;
 
     // 热更根（由 config.json 的 hot_base 决定，可经热更覆盖，不用出 APK）
@@ -75,6 +90,31 @@ public class MainActivity extends AppCompatActivity {
         ws.setUserAgentString(ws.getUserAgentString() + " WenziTool/" + versionName());
 
         webView.addJavascriptInterface(new JSBridge(), "Android");
+        // 关键：不设 WebChromeClient，H5 里的 <input type="file"> 点了没反应。
+        // 这里接管文件选择，把系统选到的图交回 WebView（贴聊天截图 = 核心功能）。
+        webView.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback,
+                                             FileChooserParams params) {
+                // 上一次还没结完就取消，避免回调悬挂
+                if (mFileCallback != null) {
+                    mFileCallback.onReceiveValue(null);
+                }
+                mFileCallback = callback;
+                boolean allowMultiple = params != null
+                        && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
+
+                // 先要相册权限，拿到再唤起选择器；否则部分机型选择器直接空列表
+                if (!hasMediaPermission()) {
+                    mPendingCb = callback;
+                    mAllowMultiple = allowMultiple;
+                    requestMediaPermission();
+                    return true;
+                }
+                openImagePicker(allowMultiple);
+                return true;
+            }
+        });
         webView.setWebViewClient(new WebViewClient() {
             // 把 https://local.hot/* 映射到 内部存储 files/hot/*（虚拟域，绕过 CORS）
             @Override
@@ -114,6 +154,90 @@ public class MainActivity extends AppCompatActivity {
 
         // 启动成功 3 秒后，后台静默热更新（用户零操作）
         ui.postDelayed(this::backgroundUpdate, 3000);
+    }
+
+    // ---------------- 图片选择 / 相册权限 ----------------
+    // Android 13+ 是 READ_MEDIA_IMAGES，12 及以下是 READ_EXTERNAL_STORAGE。
+    // 注意：即便不给权限，ACTION_GET_CONTENT 在某些 ROM 上也能用（走 SAF 授权单张），
+    // 所以这里的策略是「能要到就要，要不到照样尝试打开选择器」，绝不把用户堵死。
+    private boolean hasMediaPermission() {
+        String perm = Build.VERSION.SDK_INT >= 33
+                ? "android.permission.READ_MEDIA_IMAGES"
+                : Manifest.permission.READ_EXTERNAL_STORAGE;
+        return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestMediaPermission() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[]{"android.permission.READ_MEDIA_IMAGES"}, REQ_PERM_MEDIA);
+        } else {
+            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQ_PERM_MEDIA);
+        }
+    }
+
+    private void openImagePicker(boolean allowMultiple) {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent.setType("image/*");
+        if (allowMultiple) intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+        try {
+            startActivityForResult(Intent.createChooser(intent, "选择聊天截图"), REQ_PICK_FILE);
+        } catch (Exception e) {
+            Log.w(TAG, "picker fail", e);
+            finishFileCallback(null);
+            ui.post(() -> toast("没找到可用的图片选择器"));
+        }
+    }
+
+    private void finishFileCallback(Uri[] uris) {
+        ValueCallback<Uri[]> cb = mFileCallback;
+        mFileCallback = null;
+        mPendingCb = null;
+        if (cb != null) {
+            try { cb.onReceiveValue(uris); } catch (Exception ignore) {}
+        }
+        // 交回结果后，让 WebView 里的 <input> change 事件正常触发
+        if (webView != null) webView.requestFocus();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_PERM_MEDIA) return;
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        // 无论是否授权都继续打开选择器：SAF 允许用户只授权单张图片
+        if (mPendingCb != null) mFileCallback = mPendingCb;
+        mPendingCb = null;
+        if (!granted) toast("未授权相册，选择器里可能看不到图片");
+        openImagePicker(mAllowMultiple);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_PICK_FILE) return;
+        if (resultCode != RESULT_OK || data == null) {
+            finishFileCallback(null);
+            return;
+        }
+        Uri[] uris;
+        ClipData clip = data.getClipData();
+        if (clip != null && clip.getItemCount() > 0) {
+            // 多选：逐项取出
+            uris = new Uri[clip.getItemCount()];
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                uris[i] = clip.getItemAt(i).getUri();
+            }
+        } else if (data.getData() != null) {
+            uris = new Uri[]{data.getData()};
+        } else {
+            uris = null;
+        }
+        finishFileCallback(uris);
+    }
+
+    private void toast(String msg) {
+        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show();
     }
 
     // ---------------- 配置 ----------------

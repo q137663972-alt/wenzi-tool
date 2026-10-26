@@ -127,7 +127,7 @@ writeFileSync(join(PACK_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2)
 
 const update = {
   min_apk: 2,
-  app: '3.0.0',
+  app: '3.1.0',
   sig: 'local',
   build,
   ts: new Date().toISOString(),

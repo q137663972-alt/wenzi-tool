@@ -5,6 +5,19 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 相册：贴聊天截图做 OCR。
+         Android 13(API 33)+ 用细粒度媒体权限；12 及以下才用老的 READ_EXTERNAL_STORAGE。
+         maxSdkVersion 保证新系统不会因为申请旧权限被拒。 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <!-- Android 14+ 部分机型选择"选定照片"时用这个，可不申请全库权限 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- 拍照直接拍聊天记录（可选，缺失时该入口自动隐藏） -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/ic_menu_edit"
