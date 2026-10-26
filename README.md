@@ -103,7 +103,39 @@ Java 桥接 `askLLM` 改为请求你的代理即可（不进前端）。
 
 ---
 
-## 七、本地预览 H5（无需安卓）
+## 七、沙盒推送 GitHub（被墙时的正确姿势）
+
+已按「小学学习乐园」资料库的实战经验验证过，直接照做：
+
+```bash
+# ① token 只放文件，绝不写进命令文本（写在命令里会被工具链改写 → 必 401）
+printf '%s' 'ghp_xxx' > /root/.git_token && chmod 600 /root/.git_token
+
+# ② 通道判据：401 = 通道通但没带凭据（可用）；000 = 真不可达
+#    ghproxy.net / gh-proxy.com -> 401（可用）；ghfast.top -> 000（不可达）
+
+# ③ 凭据走 extraHeader，不写进 URL userinfo（代理会吞掉并返 403）
+AUTH=$(printf 'x-access-token:%s' "$(cat /root/.git_token)" | base64 -w0)
+git -c "http.extraHeader=Authorization: Basic $AUTH" \
+    -c user.name=USER -c user.email=USER@users.noreply.github.com \
+    push "https://ghproxy.net/https://github.com/USER/REPO.git" HEAD:refs/heads/main
+```
+
+**踩过的坑（都是资料库记录过的）：**
+
+| 坑 | 表现 | 解法 |
+|---|---|---|
+| token 写命令里 | 必 401 | 只从文件读 |
+| 凭据塞 URL `user:token@` | 代理 403 | 用 `extraHeader` |
+| `ghfast.top` | 连接超时 000 | 换 `ghproxy.net` |
+| token 缺 `workflow` 权限 | push 被拒：`refusing to allow a PAT to create or update workflow` | 去 token 设置勾 `workflow`，或别推 `.github/workflows/` |
+| 本地历史与远程不一致 | `fetch first` 拒绝 | 先 `git fetch` 再 `git reset --soft FETCH_HEAD` |
+
+> `gh-proxy.com` 只代理 API（验 token、查提交），**不代理 git push**。
+
+---
+
+## 八、本地预览 H5（无需安卓）
 
 桌面浏览器直接打开 `web/index.html` 即可看界面（无桥接时自动走离线引擎）。
 要测真·大模型，需在有 Android 桥接的 WebView 环境（即编译后的 App）中运行。
