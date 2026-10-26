@@ -6,6 +6,17 @@ android {
     namespace 'com.wenzigongju'
     compileSdk 34
 
+    // ---- 本机临时签名（沙盒构建用，证书随项目归档）----
+    // 说明：同一枚证书的后续版本可直接覆盖安装；换证书必须卸载重装。
+    signingConfigs {
+        localSign {
+            storeFile file("../keystore/wenzi.jks")
+            storePassword "wenzi2026"
+            keyAlias "wenzi"
+            keyPassword "wenzi2026"
+        }
+    }
+
     defaultConfig {
         applicationId "com.wenzigongju"
         minSdk 21
@@ -16,6 +27,7 @@ android {
 
     buildTypes {
         release {
+            signingConfig signingConfigs.localSign
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -29,6 +41,9 @@ android {
     buildFeatures {
         viewBinding false
     }
+
+    // 固定构建工具版本（AGP 8.1.4 默认要 33.0.1，这里统一到已安装的 34.0.0）
+    buildToolsVersion "34.0.0"
 }
 
 dependencies {

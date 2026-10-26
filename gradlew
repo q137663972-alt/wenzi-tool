@@ -35,7 +35,7 @@ DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
 GRADLE_OPTS="$GRADLE_OPTS $DEFAULT_JVM_OPTS"
 JAVA_OPTS="$JAVA_OPTS $DEFAULT_JVM_OPTS"
 
-exec "$JAVA_HOME/bin/java" $GRADLE_OPTS $JAVA_OPTS \
+exec "${JAVA_HOME:-java}/bin/java" -Xmx512m -Xms64m \
   -classpath "$CLASSPATH" \
   org.gradle.wrapper.GradleWrapperMain \
   "$@"
