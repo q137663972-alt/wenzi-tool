@@ -52,24 +52,29 @@
     return { turns: turns, confidence: 100, stats: { total: turns.length, explicit: turns.length, dual: 1 } };
   }
 
-  function mergeLogs(dual, rawLog) {
-    var fromLog = rawLog ? window.WZ_PARSE.parse(rawLog) : null;
-    if (dual && fromLog && fromLog.turns.length) {
-      // 整段在前（更早），双窗在后（最新几句）—— 合并成一条时间线
-      return {
-        turns: fromLog.turns.concat(dual.turns),
-        confidence: 100,
-        stats: fromLog.stats
-      };
-    }
-    return dual || fromLog;
-  }
-
   function getParsed() {
     var rawLog = $('chatlog').value.trim();
     var dual = collectDual();
-    if (!dual && !rawLog) { parsed = null; return null; }
-    parsed = mergeLogs(dual, rawLog);
+    // 优先级：截图识别 > 整段粘贴 > 双窗
+    // 截图最准（左右来自像素），整段次之，双窗需人工排先后
+    var base = null;
+    if (shotTurns && shotTurns.length) {
+      base = {
+        turns: shotTurns.map(function (t) { return { who: t.who, text: t.text, guessed: !!t.placeholder }; }),
+        confidence: 100,
+        stats: { total: shotTurns.length, shot: 1 }
+      };
+    }
+    var fromLog = rawLog ? window.WZ_PARSE.parse(rawLog) : null;
+    if (base && fromLog && fromLog.turns.length) {
+      base.turns = base.turns.concat(fromLog.turns);
+      base.stats = fromLog.stats;
+    } else if (!base && fromLog && fromLog.turns.length) {
+      base = fromLog;
+    }
+    if (base && dual) base.turns = base.turns.concat(dual.turns);
+    if (!base && dual) base = dual;
+    parsed = base;
     return parsed;
   }
 
@@ -81,31 +86,52 @@
 
     var conf = p.confidence;
     var level = conf >= 80 ? 'high' : (conf >= 40 ? 'mid' : 'low');
-    var note = p.stats && p.stats.dual
-      ? '双窗录入，归属确定'
-      : (level === 'high' ? '说话人识别清晰'
-        : (level === 'mid' ? '部分靠推断，点气泡可改' : '几乎全靠推断，点气泡翻转修正'));
+    var note = (p.stats && p.stats.shot)
+      ? '截图识别（左右按像素判定）'
+      : (p.stats && p.stats.dual
+        ? '双窗录入，归属确定'
+        : (level === 'high' ? '说话人识别清晰'
+          : (level === 'mid' ? '部分靠推断，点气泡可改' : '几乎全靠推断，点气泡翻转修正')));
 
     var list = $('chatList');
     list.innerHTML = '';
-    var show = p.turns.slice(-40);
+    // 时间线：从上到下 = 最早 → 最新（她左 / 我右），原生 DOM 顺序即视觉顺序
     var head = document.createElement('div');
     head.className = 'chat-conf';
     head.innerHTML = '共 <b>' + p.turns.length + '</b> 条 · 置信度 <b class="' + level + '">' + conf + '%</b> · ' + note;
     list.appendChild(head);
-    for (var i = 0; i < show.length; i++) {
-      list.appendChild(buildBubble(show[i]));
+    for (var i = 0; i < p.turns.length; i++) {
+      list.appendChild(buildBubble(p.turns[i]));
     }
+    // 滚到底部看最新一句
+    requestAnimationFrame(function () { list.scrollTop = list.scrollHeight; });
   }
 
   function buildBubble(t) {
     var row = document.createElement('div');
     row.className = 'chat-row ' + (t.who === 'me' ? 'right' : 'left');
+    if (t.who === 'me') row.className += ' right';
 
     var bubble = document.createElement('div');
     bubble.className = 'chat-bubble ' + (t.who === 'me' ? 'me' : 'her') + (t.guessed ? ' unsure' : '');
-    bubble.textContent = t.text;
+    if (!t.text) {
+      // 截图切出气泡但没读到文字 → 可点击直接补
+      bubble.className += ' empty';
+      bubble.textContent = '点这里补上这句…';
+    } else {
+      bubble.textContent = t.text;
+    }
     bubble.onclick = function () {
+      if (!t.text) {
+        var v = window.prompt('这句说的是什么？', '');
+        if (v == null) return;
+        t.text = v.trim();
+        if (!t.text) return;
+        t.guessed = false;
+        var nr = buildBubble(t);
+        row.parentNode.replaceChild(nr, row);
+        return;
+      }
       t.who = t.who === 'me' ? 'her' : 'me';
       t.guessed = false;
       var newRow = buildBubble(t);
@@ -116,10 +142,164 @@
     who.className = 'chat-who';
     who.textContent = (t.who === 'me' ? '我' : ($('herName').value.trim() || '她')) + (t.guessed ? ' ?' : '');
 
-    if (t.who === 'me') row.className += ' right';
     row.appendChild(bubble);
     row.appendChild(who);
     return row;
+  }
+
+  // ---------- 截图识别 ----------
+  // 分工（实测得出）：
+  //   像素 → 每个气泡的 y 与左右（准确率 5/5，且不吃配色）
+  //   模型 → 只读文字（准确率 5/5）
+  // 模型判左右会错 3/5，所以绝不让它判 side。
+  var shots = [];        // [{img, dataUrl, bubbles}]
+  var shotTurns = [];    // 从截图得到的 turns
+
+  var SHOT_OCR_PROMPT =
+    '你是微信聊天截图 OCR。任务只有一个：把图里**所有聊天气泡中的文字**按从上到下的顺序读出来。\n' +
+    '规则：\n' +
+    '1. 只输出 JSON 数组，形如 [{"text":"原文字"}]，不要任何解释、不要 markdown 代码块。\n' +
+    '2. 一条气泡 = 一个元素。文字照抄，不要改错别字、不要补标点、不要翻译。\n' +
+    '3. **不要输出头像、昵称、时间戳、"以下为新消息"这类系统提示**。\n' +
+    '4. 不要判断左右，不要编号。\n' +
+    '5. 气泡里的 emoji 保留原样。';
+
+  function addShotFiles(files) {
+    var list = Array.prototype.slice.call(files || []);
+    if (!list.length) return;
+    var jobs = list.map(function (f) {
+      return window.WZ_SHOT.loadImage(f).then(function (img) {
+        var dataUrl = window.WZ_SHOT.toDataUrl(img, 1280);
+        var cv = window.WZ_SHOT.toCanvas(img, 720);
+        var bubbles = window.WZ_SHOT.segment(cv);
+        shots.push({ img: img, dataUrl: dataUrl, bubbles: bubbles, name: f.name || 'screenshot' });
+      }).catch(function () {});
+    });
+    $('shotStatus').textContent = '正在读取截图…';
+    Promise.all(jobs).then(function () {
+      renderShotList();
+      var tot = shots.reduce(function (s, x) { return s + x.bubbles.length; }, 0);
+      $('shotStatus').innerHTML = '已加 <b>' + shots.length + '</b> 张图 · 切出 <b>' + tot + '</b> 个气泡';
+      parseShots();
+    });
+  }
+
+  function renderShotList() {
+    var box = $('shotList');
+    box.innerHTML = '';
+    shots.forEach(function (s, i) {
+      var item = document.createElement('div');
+      item.className = 'shot-item';
+      var im = document.createElement('img');
+      im.src = s.dataUrl;
+      item.appendChild(im);
+      var x = document.createElement('div');
+      x.className = 'shot-x'; x.textContent = '×';
+      x.onclick = function () { shots.splice(i, 1); renderShotList(); parseShots(); };
+      item.appendChild(x);
+      var tag = document.createElement('div');
+      tag.className = 'shot-tag';
+      tag.textContent = s.bubbles.length + ' 条';
+      item.appendChild(tag);
+      box.appendChild(item);
+    });
+  }
+
+  // 把多张截图的气泡按 y 串起来（同一张图内从上到下，图与图按加入顺序）
+  function allBubbles() {
+    var out = [];
+    shots.forEach(function (s) { out = out.concat(s.bubbles); });
+    return out;
+  }
+
+  function parseShots() {
+    if (!shots.length) { shotTurns = []; return Promise.resolve([]); }
+    var bubbles = allBubbles();
+    if (!bubbles.length) {
+      $('shotStatus').textContent = '没切出气泡，试试原图/未压缩的截图。';
+      return Promise.resolve([]);
+    }
+
+    var modelId = $('model').value || 'auto';
+    if (modelId === 'offline' || !hasBridge) {
+      // 离线：只能用像素骨架（左右和顺序已对，文字留空待补）
+      shotTurns = window.WZ_SHOT.skeleton(bubbles);
+      $('shotStatus').innerHTML = '离线模式：已按像素切出 <b>' + bubbles.length + '</b> 条并可判断左右，点虚线气泡可补文字。';
+      renderChatWin();
+      return Promise.resolve(shotTurns);
+    }
+
+    $('shotStatus').innerHTML = '识别文字中…（切出 <b>' + bubbles.length + '</b> 个气泡）';
+    // 逐张送模型，保证文字与气泡的对应关系不乱
+    var idx = 0;
+    var textsAll = [];
+    function next() {
+      if (idx >= shots.length) return Promise.resolve();
+      var s = shots[idx++];
+      var msgs = [
+        { role: 'system', content: SHOT_OCR_PROMPT },
+        {
+          role: 'user', content: [
+            { type: 'image_url', image_url: { url: s.dataUrl } },
+            { type: 'text', text: '按从上到下顺序输出所有聊天气泡的文字 JSON 数组。' }
+          ]
+        }
+      ];
+      return askLLM(modelId, msgs, 0.05, 1000, { vision: true })
+        .then(function (res) {
+          if (res && res.ok) {
+            var arr = parseTextArray(res.content);
+            textsAll.push(arr);
+          } else {
+            textsAll.push([]);
+          }
+          return next();
+        })
+        .catch(function () { textsAll.push([]); return next(); });
+    }
+
+    return next().then(function () {
+      var turns = [];
+      shots.forEach(function (s, i) {
+        var texts = textsAll[i] || [];
+        turns = turns.concat(window.WZ_SHOT.align(s.bubbles, texts));
+      });
+      shotTurns = turns;
+      var got = turns.length, total = bubbles.length;
+      if (got) {
+        $('shotStatus').innerHTML = '识别完成：<b>' + got + '</b> 条对话已还原（气泡 ' + total + ' 个）' +
+          (got < total ? '　<span style="color:#ffc857">有条未识别出文字，可在下方双窗补充</span>' : '');
+      } else {
+        $('shotStatus').innerHTML = '文字没读出来（可能是密钥不支持看图）。已按像素切出 <b>' + total + '</b> 条，左右已判定，文字请手动补。';
+        shotTurns = window.WZ_SHOT.skeleton(bubbles);
+      }
+      renderChatWin();
+    });
+  }
+
+  // 模型返回可能是纯数组、也可能是 {texts:[...]} / 带代码块，全部兜住
+  function parseTextArray(content) {
+    if (!content) return [];
+    var s = String(content).replace(/```json/gi, '').replace(/```/g, '').trim();
+    var arr = null;
+    var m = s.match(/\[[\s\S]*\]/);
+    if (m) { try { arr = JSON.parse(m[0]); } catch (e) {} }
+    if (!arr) {
+      var m2 = s.match(/\{[\s\S]*\}/);
+      if (m2) {
+        try {
+          var o = JSON.parse(m2[0]);
+          if (Array.isArray(o.texts)) arr = o.texts;
+          else if (Array.isArray(o.turns)) arr = o.turns;
+          else if (Array.isArray(o.messages)) arr = o.messages;
+        } catch (e) {}
+      }
+    }
+    if (!Array.isArray(arr)) return [];
+    return arr.map(function (x) {
+      if (typeof x === 'string') return x;
+      return x && (x.text || x.content || '') || '';
+    }).filter(Boolean);
   }
 
   // ---------- 桥接 ----------
@@ -129,19 +309,31 @@
     var w = waiters[reqId];
     if (!w) return;
     delete waiters[reqId];
+    // 原生通常回对象；但若某层把它序列化成字符串，这里兜一下，避免上层全部失效
+    if (typeof result === 'string') {
+      try { result = JSON.parse(result); } catch (e) { result = { ok: false, error: result }; }
+    }
     w(result);
   };
-  function askLLM(modelId, messages, temperature) {
+  function askLLM(modelId, messages, temperature, maxTokens, opts) {
     return new Promise(function (resolve, reject) {
       if (!hasBridge) { reject(new Error('no-bridge')); return; }
       var reqId = 'r' + (++reqSeq);
       var timer = setTimeout(function () {
         if (waiters[reqId]) { delete waiters[reqId]; reject(new Error('timeout')); }
-      }, 45000);
+      }, maxTokens ? 90000 : 45000);
       waiters[reqId] = function (result) { clearTimeout(timer); resolve(result); };
-      Android.askLLM(reqId, JSON.stringify({
+      var payload = {
         model_id: modelId, messages: messages, temperature: temperature == null ? 0.85 : temperature
-      }));
+      };
+      if (maxTokens) payload.max_tokens = maxTokens;
+      // 看图请求 → 原生层切到 config.vision（多模态模型），不影响对话模型
+      if (opts && opts.vision) payload.vision_model = true;
+      try {
+        Android.askLLM(reqId, JSON.stringify(payload));
+      } catch (e) {
+        delete waiters[reqId]; clearTimeout(timer); reject(e);
+      }
     });
   }
 
@@ -453,6 +645,40 @@
     $('clear').addEventListener('click', function () {
       if (confirm('清空本地对话历史？')) { history = []; localStorage.removeItem(LS_HIST); renderStream(); }
     });
+    // ---------- 截图识别事件 ----------
+    var zone = $('shotZone');
+    var fileInput = $('shotFile');
+    if (zone && fileInput) {
+      zone.addEventListener('click', function () { fileInput.click(); });
+      fileInput.addEventListener('change', function () {
+        addShotFiles(fileInput.files);
+        fileInput.value = '';
+      });
+      // 拖拽
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('hover'); });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.remove('hover'); });
+      });
+      zone.addEventListener('drop', function (e) {
+        if (e.dataTransfer && e.dataTransfer.files) addShotFiles(e.dataTransfer.files);
+      });
+      // 桌面端 Ctrl+V 直接贴图
+      document.addEventListener('paste', function (e) {
+        if (!e.clipboardData) return;
+        var imgs = [];
+        for (var i = 0; i < e.clipboardData.items.length; i++) {
+          var it = e.clipboardData.items[i];
+          if (it.type.indexOf('image') === 0) {
+            var f = it.getAsFile();
+            if (f) imgs.push(f);
+          }
+        }
+        if (imgs.length) { e.preventDefault(); addShotFiles(imgs); }
+      });
+    }
+
     // 三个输入区任意变动 → 自动重建聊天窗
     var timer = null;
     function scheduleRebuild() {

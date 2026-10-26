@@ -21,6 +21,17 @@
     <label>🎯 她最后说的那句 <span class="hint">（要接着回的那句，必填）</span></label>
     <textarea id="message" rows="2" placeholder="她回了句「哈哈」就没下文了…"></textarea>
 
+    <div class="shot-zone" id="shotZone">
+      <div class="shot-inner">
+        <div class="shot-icon">🖼️</div>
+        <div class="shot-title">贴聊天截图，自动还原对话</div>
+        <div class="shot-sub">点这里选图，或直接把截图拖进来 / Ctrl+V 粘贴</div>
+      </div>
+      <input type="file" id="shotFile" accept="image/*" multiple hidden>
+    </div>
+    <div id="shotList" class="shot-list"></div>
+    <div id="shotStatus" class="shot-status"></div>
+
     <div class="dual-win">
       <div class="dual-col col-her">
         <div class="dual-head">◀ 她说的</div>
@@ -106,6 +117,7 @@
 </div>
 <script src="./js/prompts.js"></script>
 <script src="./js/chatparse.js"></script>
+<script src="./js/shotparse.js"></script>
 <script src="./js/offline.js"></script>
 <script src="./js/app.js"></script>
 </body>

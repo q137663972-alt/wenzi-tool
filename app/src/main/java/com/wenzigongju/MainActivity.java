@@ -338,8 +338,15 @@ public class MainActivity extends AppCompatActivity {
             }
             JSONObject prov = null;
             if (appConfig != null) {
-                JSONObject providers = appConfig.optJSONObject("providers");
-                if (providers != null) prov = providers.optJSONObject(modelId);
+                // 看图请求（截图 OCR）走独立的 vision 配置，不与对话模型混用：
+                // 对话多用 glm-4-flash 这类纯文本模型，看图必须用 glm-4v-* 这类多模态模型
+                if (req.optBoolean("vision_model", false)) {
+                    prov = appConfig.optJSONObject("vision");
+                }
+                if (prov == null) {
+                    JSONObject providers = appConfig.optJSONObject("providers");
+                    if (providers != null) prov = providers.optJSONObject(modelId);
+                }
             }
             if (prov == null || prov.optString("api_key", "").isEmpty()) {
                 return new JSONObject().put("ok", false).put("error", "该模型未配置密钥").toString();
@@ -351,6 +358,8 @@ public class MainActivity extends AppCompatActivity {
             double temp = req.optDouble("temperature", 0.9);
 
             JSONObject body = new JSONObject().put("model", model).put("messages", messages).put("temperature", temp);
+            int maxTokens = req.optInt("max_tokens", 0);
+            if (maxTokens > 0) body.put("max_tokens", maxTokens);
             byte[] resp = httpPostJson(base + "/chat/completions", key, body);
             if (resp == null) return new JSONObject().put("ok", false).put("error", "网络请求失败").toString();
             String text = new String(resp);
