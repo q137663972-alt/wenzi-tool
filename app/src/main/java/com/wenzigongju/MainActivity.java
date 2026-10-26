@@ -51,15 +51,12 @@ import java.util.zip.ZipFile;
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "WenziTool";
-    public static final String PKG = "com.wenzigongju";
     private WebView webView;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private JSONObject appConfig;
 
     // 热更根（由 config.json 的 hot_base 决定，可经热更覆盖，不用出 APK）
-    private String HOT_BASE = "https://q137663972-alt.github.io/wenzi-tool/";
-    // 备用源：jsDelivr 镜像（大陆 github.io 常被墙时才用得上；主源通了就不碰它）
-    private String HOT_MIRROR = "https://cdn.jsdelivr.net/gh/q137663972-alt/wenzi-tool@gh-pages/";
+    private String HOT_BASE = "https://example.github.io/wenzi-tool/";
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -124,7 +121,6 @@ public class MainActivity extends AppCompatActivity {
         appConfig = readJsonAssetOrHot("config.json");
         if (appConfig != null) {
             HOT_BASE = appConfig.optString("hot_base", HOT_BASE);
-            HOT_MIRROR = appConfig.optString("hot_mirror", "");
         }
     }
 
@@ -180,17 +176,15 @@ public class MainActivity extends AppCompatActivity {
         new Thread(() -> {
             try {
                 // 1) 读 update.json（清单索引，含 manifest 位置与 app/sig 等）
-                byte[] updBytes = fetchAny("update.json");
-                String upd = updBytes == null ? null : new String(updBytes, "utf-8");
+                String upd = httpGetText(HOT_BASE + "update.json");
                 if (upd == null) return;
                 JSONObject update = new JSONObject(upd);
                 int minApk = update.optInt("min_apk", 1);
                 if (versionCode() < minApk) return;   // 壳太旧，等用户装新包
-                String manifestRel = update.optString("manifest", "pack/manifest.json");
+                String manifestUrl = update.optString("manifest", HOT_BASE + "pack/manifest.json");
 
                 // 2) 读 manifest（列出各 pack 的真实文件名 + sha256）
-                byte[] manBytes = fetchAny(manifestRel);
-                String man = manBytes == null ? null : new String(manBytes, "utf-8");
+                String man = httpGetText(manifestUrl);
                 if (man == null) return;
                 JSONObject manifest = new JSONObject(man);
                 String build = manifest.optString("build", "");
@@ -216,7 +210,7 @@ public class MainActivity extends AppCompatActivity {
                     JSONObject p = packs.getJSONObject(i);
                     String name = p.getString("name");
                     String sha = p.optString("sha256", "");
-                    if (!downloadAndVerify(name, tmp, sha)) {
+                    if (!downloadAndVerify(HOT_BASE, name, tmp, sha)) {
                         allOk = false;
                         break;
                     }
@@ -248,10 +242,10 @@ public class MainActivity extends AppCompatActivity {
 
     private volatile boolean idxExistedBefore = false;
 
-    private boolean downloadAndVerify(String name, File outDir, String expectSha) {
-        // 双路：先试 hot/ 根，失败再试 hot/pack/（老壳 URL 不带 pack/ 前缀也接得住）；主源不通切镜像
-        byte[] data = fetchAny(name);
-        if (data == null) data = fetchAny("pack/" + name);
+    private boolean downloadAndVerify(String base, String name, File outDir, String expectSha) {
+        // 双路：先试 hot/ 根，失败再试 hot/pack/（老壳 URL 不带 pack/ 前缀也接得住）
+        byte[] data = httpGetBytes(base + name);
+        if (data == null) data = httpGetBytes(base + "pack/" + name);
         if (data == null) return false;
         if (!expectSha.isEmpty()) {
             String got = sha256Hex(data);
@@ -270,17 +264,6 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ---------------- HTTP（原生，避开 CORS） ----------------
-    /** 主源 + 镜像多源读取：谁先通就用谁。镜像 base 为空则跳过。 */
-    private byte[] fetchAny(String rel) {
-        byte[] b = httpGetBytes(HOT_BASE + rel);
-        if (b != null) return b;
-        if (HOT_MIRROR != null && !HOT_MIRROR.isEmpty()) {
-            Log.i(TAG, "主源失败，改用镜像: " + rel);
-            return httpGetBytes(HOT_MIRROR + rel);
-        }
-        return null;
-    }
-
     private String httpGetText(String urlStr) {
         byte[] b = httpGetBytes(urlStr);
         return b == null ? null : new String(b);
@@ -312,9 +295,9 @@ public class MainActivity extends AppCompatActivity {
         // 返回带密钥的可用模型 id 列表（H5 据此生成下拉；密钥只在原生，不进 JS 文本）
         @JavascriptInterface
         public String getEnabledModels() {
-            JSONObject cfg = appConfig;
-            JSONArray arr = new JSONArray();
             try {
+                JSONObject cfg = appConfig;
+                JSONArray arr = new JSONArray();
                 if (cfg != null) {
                     JSONObject prov = cfg.optJSONObject("providers");
                     if (prov != null) {
@@ -325,8 +308,10 @@ public class MainActivity extends AppCompatActivity {
                         }
                     }
                 }
-            } catch (JSONException ignore) {}
-            return arr.toString();
+                return arr.toString();
+            } catch (JSONException e) {
+                return "[]";
+            }
         }
 
         @JavascriptInterface
@@ -378,13 +363,12 @@ public class MainActivity extends AppCompatActivity {
                 return new JSONObject().put("ok", false).put("error", "响应解析失败：" + text.substring(0, Math.min(200, text.length()))).toString();
             }
         } catch (Exception e) {
-            return "{\"ok\":false,\"error\":\"" + errMsg(e) + "\"}";
+            try {
+                return new JSONObject().put("ok", false).put("error", e.getMessage()).toString();
+            } catch (JSONException je) {
+                return "{\"ok\":false,\"error\":\"exception\"}";
+            }
         }
-    }
-
-    private static String errMsg(Throwable e) {
-        String m = e == null ? "unknown" : String.valueOf(e.getMessage());
-        return m.replace("\\", "/").replace("\"", "'").replace("\n", " ").replace("\r", " ");
     }
 
     private byte[] httpPostJson(String urlStr, String apiKey, JSONObject body) {
@@ -489,6 +473,10 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    private static String readStream(InputStream is) throws IOException {
+        return new String(readBytes(is), "utf-8");
+    }
+
     private static byte[] readBytes(InputStream is) throws IOException {
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         try (BufferedInputStream bis = new BufferedInputStream(is)) {
@@ -496,10 +484,6 @@ public class MainActivity extends AppCompatActivity {
             while ((n = bis.read(buf)) > 0) bos.write(buf, 0, n);
         }
         return bos.toByteArray();
-    }
-
-    private static String readStream(InputStream is) throws IOException {
-        return new String(readBytes(is), "utf-8");
     }
 
     private static String readFile(File f) throws IOException {

@@ -1,4 +1,1 @@
 // 顶层 build.gradle（保留极简，依赖在 app/build.gradle 里声明）
-plugins {
-    id 'com.android.application' version '8.1.4' apply false
-}

@@ -1,11 +1,15 @@
-// 文字工具 · 前端主逻辑（浏览器端）
-// 在 Android WebView 中：经 Android 桥接调用大模型（避开 CORS、密钥不进 JS）。
-// 无桥接（桌面预览）或调用失败时：回退到内置离线引擎。
+// 文字工具 · 前端主逻辑 v2
+// 关键变化：
+//  1) 聊天记录先经 WZ_PARSE 打标签（我/她），彻底解决"分不清谁是谁"；
+//  2) 自动判断关系阶段 → 请用户确认 → 再出话术（防止阶段错位）；
+//  3) 输出三档话术（稳/撩/撤）+ 每条附「她会怎么回→你怎么接」预判；
+//  4) 话术一键复制，且是干净成品句，不带括号解释。
 (function () {
   var $ = function (id) { return document.getElementById(id); };
   var LS_HIST = 'wz_history';
   var LS_STYLE = 'wz_use_style';
   var LS_MODEL = 'wz_model';
+  var LS_HER = 'wz_her_name';
 
   var LABELS = {
     'zhipu-glm': '智谱 GLM-4-Flash',
@@ -15,64 +19,110 @@
 
   var hasBridge = (typeof Android !== 'undefined');
 
-  // 关系档案（本地 localStorage，跨会话记忆）
-  var DEFAULT_PROFILE = { stage: '', goal: '', timeline: [], notes: '' };
-  function loadProfile() {
-    try { return Object.assign({}, DEFAULT_PROFILE, JSON.parse(localStorage.getItem('wz_profile') || '{}')); }
-    catch (e) { return Object.assign({}, DEFAULT_PROFILE); }
-  }
-  function saveProfile(p) {
-    localStorage.setItem('wz_profile', JSON.stringify(p));
-  }
-  function profileSummary(p) {
-    var lines = [];
-    if (p.stage) lines.push('关系阶段：' + p.stage);
-    if (p.goal) lines.push('用户目标：' + p.goal);
-    if (p.timeline && p.timeline.length) lines.push('进展时间线：' + p.timeline.slice(-8).join('；'));
-    if (p.notes) lines.push('备注/她的特点：' + p.notes);
-    return lines.join('\n');
-  }
-
-  // 对话历史（连贯记忆）
   var history = [];
   try { history = JSON.parse(localStorage.getItem(LS_HIST) || '[]'); } catch (e) { history = []; }
-  function toMessages() {
-    var msgs = [];
-    history.slice(-10).forEach(function (t) {
-      msgs.push({ role: 'user', content: t.user });
-      msgs.push({ role: 'assistant', content: t.res.reply || '' });
-    });
-    return msgs;
-  }
 
-  // 组装 messages（与后端同源）
-  function buildMessages(message, stage, goal, hist, chatlog, mode, useStyle) {
-    var prof = profileSummary(loadProfile());
-    var sp = window.WZ_SYSTEM_PROMPT || '';
-    if (prof) sp += '\n\n【已知关系档案】\n' + prof + '\n（结合档案保持连贯，必要时给出档案更新建议）';
-    if (useStyle && window.WZ_USER_STYLE_PROMPT) sp += '\n\n' + window.WZ_USER_STYLE_PROMPT;
-    if (mode === 'analysis' && chatlog) sp += '\n\n【当前任务】用户提交的是一段完整聊天记录，请开启完整聊天记录综合分析模式，综合从头到尾研判并给出结构化结论。';
+  // ---------- 聊天记录解析状态 ----------
+  var parsed = null;        // { turns, confidence, stats }
+  var confirmedStage = '';  // 用户确认的阶段
 
-    var messages = [{ role: 'system', content: sp }];
-    (hist || []).slice(-12).forEach(function (h) {
-      messages.push({ role: h.role === 'user' ? 'user' : 'assistant', content: h.content || '' });
-    });
-
-    var userContent;
-    if (mode === 'analysis' && chatlog) {
-      userContent = '【背景】关系阶段：' + (stage || '见档案') + '；目标：' + (goal || '见档案') +
-        '\n【补充情况】' + (message || '无') +
-        '\n\n【完整聊天记录（从头到尾）】\n' + chatlog +
-        '\n\n请综合研判并给整体打法与下一步。';
-    } else {
-      userContent = '【背景】关系阶段：' + (stage || '未知') + '；目标：' + (goal || '未知') +
-        '\n【对方说了什么 / 当前情况】\n' + message;
+  // ---------- 聊天窗口（她左 / 我右，微信式气泡） ----------
+  // 数据来源优先级：
+  //   A) 双窗（她说 / 我说的）逐条录入 —— 微信不能多选复制，靠这个打
+  //   B) 整段粘贴 —— 有就优先当骨架，双窗内容按时间追加在后
+  // 两条路都走同一个 turns 结构，AI 侧无差别。
+  function collectDual() {
+    function lines(id) {
+      return ($(id).value || '').split('\n')
+        .map(function (s) { return s.replace(/^\s*[\[\(【]?\s*(我|她|对方|你)\s*[\]\)】]?\s*[：:]\s*/, '').trim(); })
+        .filter(function (s) { return s && !/^[＋+]$/.test(s); });
     }
-    messages.push({ role: 'user', content: userContent });
-    return messages;
+    var her = lines('herLog'), me = lines('meLog');
+    if (!her.length && !me.length) return null;
+
+    // 两窗按"各记各的"录入时无法知道真实先后，取较短一侧的长度做上限，
+    // 然后交替拼成时间线（他一句她一句是最常见的聊天节奏）。
+    var turns = [], n = Math.max(her.length, me.length);
+    var hi = 0, mi = 0;
+    // 第一条归属：看哪边先有内容且"她"通常先开口 —— 但更稳的是：谁多谁后
+    for (var k = 0; k < n; k++) {
+      if (hi < her.length) turns.push({ who: 'her', text: her[hi++], guessed: false });
+      if (mi < me.length) turns.push({ who: 'me', text: me[mi++], guessed: false });
+    }
+    return { turns: turns, confidence: 100, stats: { total: turns.length, explicit: turns.length, dual: 1 } };
   }
 
-  // 桥接调用（Promise 化）
+  function mergeLogs(dual, rawLog) {
+    var fromLog = rawLog ? window.WZ_PARSE.parse(rawLog) : null;
+    if (dual && fromLog && fromLog.turns.length) {
+      // 整段在前（更早），双窗在后（最新几句）—— 合并成一条时间线
+      return {
+        turns: fromLog.turns.concat(dual.turns),
+        confidence: 100,
+        stats: fromLog.stats
+      };
+    }
+    return dual || fromLog;
+  }
+
+  function getParsed() {
+    var rawLog = $('chatlog').value.trim();
+    var dual = collectDual();
+    if (!dual && !rawLog) { parsed = null; return null; }
+    parsed = mergeLogs(dual, rawLog);
+    return parsed;
+  }
+
+  function renderChatWin() {
+    var win = $('chatWin');
+    var p = getParsed();
+    if (!p || !p.turns.length) { win.style.display = 'none'; return; }
+    win.style.display = 'block';
+
+    var conf = p.confidence;
+    var level = conf >= 80 ? 'high' : (conf >= 40 ? 'mid' : 'low');
+    var note = p.stats && p.stats.dual
+      ? '双窗录入，归属确定'
+      : (level === 'high' ? '说话人识别清晰'
+        : (level === 'mid' ? '部分靠推断，点气泡可改' : '几乎全靠推断，点气泡翻转修正'));
+
+    var list = $('chatList');
+    list.innerHTML = '';
+    var show = p.turns.slice(-40);
+    var head = document.createElement('div');
+    head.className = 'chat-conf';
+    head.innerHTML = '共 <b>' + p.turns.length + '</b> 条 · 置信度 <b class="' + level + '">' + conf + '%</b> · ' + note;
+    list.appendChild(head);
+    for (var i = 0; i < show.length; i++) {
+      list.appendChild(buildBubble(show[i]));
+    }
+  }
+
+  function buildBubble(t) {
+    var row = document.createElement('div');
+    row.className = 'chat-row ' + (t.who === 'me' ? 'right' : 'left');
+
+    var bubble = document.createElement('div');
+    bubble.className = 'chat-bubble ' + (t.who === 'me' ? 'me' : 'her') + (t.guessed ? ' unsure' : '');
+    bubble.textContent = t.text;
+    bubble.onclick = function () {
+      t.who = t.who === 'me' ? 'her' : 'me';
+      t.guessed = false;
+      var newRow = buildBubble(t);
+      row.parentNode.replaceChild(newRow, row);
+    };
+
+    var who = document.createElement('div');
+    who.className = 'chat-who';
+    who.textContent = (t.who === 'me' ? '我' : ($('herName').value.trim() || '她')) + (t.guessed ? ' ?' : '');
+
+    if (t.who === 'me') row.className += ' right';
+    row.appendChild(bubble);
+    row.appendChild(who);
+    return row;
+  }
+
+  // ---------- 桥接 ----------
   var reqSeq = 0;
   var waiters = {};
   window.__onLLM = function (reqId, result) {
@@ -81,19 +131,16 @@
     delete waiters[reqId];
     w(result);
   };
-  function askLLM(modelId, messages, useStyle) {
+  function askLLM(modelId, messages, temperature) {
     return new Promise(function (resolve, reject) {
       if (!hasBridge) { reject(new Error('no-bridge')); return; }
       var reqId = 'r' + (++reqSeq);
       var timer = setTimeout(function () {
         if (waiters[reqId]) { delete waiters[reqId]; reject(new Error('timeout')); }
-      }, 30000);
-      waiters[reqId] = function (result) {
-        clearTimeout(timer);
-        resolve(result);
-      };
+      }, 45000);
+      waiters[reqId] = function (result) { clearTimeout(timer); resolve(result); };
       Android.askLLM(reqId, JSON.stringify({
-        model_id: modelId, messages: messages, temperature: 0.9
+        model_id: modelId, messages: messages, temperature: temperature == null ? 0.85 : temperature
       }));
     });
   }
@@ -106,115 +153,255 @@
     return null;
   }
 
-  function fillDefaults(r) {
-    r.reply = r.reply || '';
-    r.analysis = r.analysis || '';
-    r.mindset = r.mindset || '';
-    r.stage_guess = r.stage_guess || '';
-    r.interest_level = r.interest_level || '';
-    r.signals = r.signals || [];
-    r.provider_label = r.provider_label || '';
-    return r;
+  // ---------- 结构归一化：兼容旧{reply,analysis,mindset}与新{stage,read,options} ----------
+  function normalize(r) {
+    r = r || {};
+    var out = { stage: r.stage || '', stage_confidence: r.stage_confidence || '', read: r.read || '', dont: r.dont || '', profile_update: r.profile_update || '', options: [] };
+
+    if (Array.isArray(r.options) && r.options.length) {
+      out.options = r.options.slice(0, 3).map(function (o, i) {
+        return {
+          tone: o.tone || ['稳', '撩', '撤'][i] || '稳',
+          text: o.text || '',
+          why: o.why || '',
+          predict: o.predict || '',
+          then: o.then || ''
+        };
+      });
+    } else if (r.reply) {
+      // 旧格式 / 离线兜底 → 包成单条「稳」
+      out.options = [{ tone: '稳', text: r.reply, why: r.analysis || '', predict: '', then: '' }];
+      out.read = r.mindset || out.read;
+    }
+    if (!out.read && r.analysis) out.read = r.analysis;
+    return out;
   }
 
-  // 主流程
+  // ---------- 阶段判断 ----------
+  function guessStage(modelId, taggedLog) {
+    if (modelId === 'offline' || !hasBridge) return Promise.resolve(null);
+    var msgs = [
+      { role: 'system', content: window.WZ_STAGE_PROMPT },
+      { role: 'user', content: taggedLog.slice(-6000) }
+    ];
+    return askLLM(modelId, msgs, 0.3)
+      .then(function (res) {
+        if (!res || !res.ok) return null;
+        return parseContent(res.content);
+      })
+      .catch(function () { return null; });
+  }
+
+  function renderStageCard(info) {
+    var card = $('stageCard');
+    if (!info || !info.stage) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    $('stageGuess').innerHTML = '<b>' + info.stage + '</b>' +
+      (info.confidence ? ' <span class="conf">置信度' + info.confidence + '</span>' : '');
+    $('stageReason').textContent = (info.reason || '') +
+      (info.signals && info.signals.length ? '\n信号：' + info.signals.join(' / ') : '');
+  }
+
+  // ---------- 主流程 ----------
   function doChat() {
     var message = $('message').value.trim();
-    var chatlog = $('chatlog').value.trim();
-    if (!message && !chatlog) { alert('先说说情况，或粘贴完整聊天记录～'); return; }
-    var stage = $('stage').value;
-    var goal = $('goal').value;
-    var mode = chatlog ? 'analysis' : 'single';
+    var herName = $('herName').value.trim() || '她';
+
+    var p = getParsed();
+    var hasDual = $('herLog').value.trim() || $('meLog').value.trim();
+
+    if (!message && !p && !hasDual) { alert('先把她说的话填进来～（她最后那句 + 她说过的/你说过的）'); return; }
+
+    var stage = confirmedStage || $('stage').value || '';
+    var goal = $('goal').value || '';
     var useStyle = $('useStyle').checked;
     var modelId = $('model').value || 'auto';
     localStorage.setItem(LS_STYLE, useStyle ? '1' : '0');
     localStorage.setItem(LS_MODEL, modelId);
+    localStorage.setItem(LS_HER, herName);
+
+    var tagged = '';
+    if (p && p.turns.length) {
+      tagged = window.WZ_PARSE.toTagged(p.turns, herName, '我');
+    }
 
     $('go').disabled = true;
-    $('go').textContent = '思考中…';
+    $('go').textContent = '想着呢…';
+    $('stageStatus').textContent = '';
 
-    function render(res) {
-      res = fillDefaults(res);
-      var userLabel = message || ('【整段记录分析】' + chatlog.slice(0, 40) + '…');
-      history.push({ user: userLabel, res: res });
-      localStorage.setItem(LS_HIST, JSON.stringify(history.slice(-20)));
-      renderStream();
-      $('go').disabled = false;
-      $('go').textContent = '支个招 🔥';
-    }
+    var chain = Promise.resolve();
 
-    // 显式选离线
-    if (modelId === 'offline') {
-      var r = mode === 'analysis' && chatlog
-        ? window.WZ_OFFLINE.analyzeLog(chatlog)
-        : window.WZ_OFFLINE.offlineReply(message, stage, goal, useStyle);
-      render(r);
-      return;
-    }
-
-    var messages = buildMessages(message, stage, goal, toMessages(), chatlog, mode, useStyle);
-    askLLM(modelId, messages, useStyle)
-      .then(function (result) {
-        if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'llm-failed');
-        var data = parseContent(result.content);
-        if (!data || !data.reply) throw new Error('empty-reply');
-        data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
-        render(data);
-      })
-      .catch(function (err) {
-        // 桥接失败 / 超时 / 该模型无密钥 → 离线兜底
-        var r = mode === 'analysis' && chatlog
-          ? window.WZ_OFFLINE.analyzeLog(chatlog)
-          : window.WZ_OFFLINE.offlineReply(message, stage, goal, useStyle);
-        if (err && err.message && err.message !== 'no-bridge') {
-          r.analysis = '（云端调用失败：' + err.message + '）已自动切离线兜底。\n' + r.analysis;
+    // 若还没确认阶段且有聊天记录 → 先自动判断，给用户确认
+    if (tagged && !confirmedStage && !$('stage').value) {
+      $('stageStatus').textContent = '先判断一下你们到哪一步…';
+      chain = guessStage(modelId, tagged).then(function (info) {
+        if (info && info.stage) {
+          renderStageCard(info);
+          $('stageStatus').textContent = '↑ 阶段我判断在这，确认或改一下再发一次（也可直接不管它，按判断出话术）';
+          confirmedStage = info.stage;
+          $('stage').value = '';
+          $('stageConfirmed').textContent = '已确认阶段：' + info.stage;
         }
-        render(r);
+        return null;
       });
+    }
+
+    chain.then(function () {
+      var sp = buildSystem(stage || confirmedStage, goal, useStyle, herName);
+      var userContent = buildUserContent(message, tagged, herName);
+      var messages = [{ role: 'system', content: sp }, { role: 'user', content: userContent }];
+
+      if (modelId === 'offline') {
+        var off = offlineFallback(message, stage || confirmedStage, goal, useStyle, tagged);
+        render(off);
+        return;
+      }
+      return askLLM(modelId, messages, 0.85)
+        .then(function (result) {
+          if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'llm-failed');
+          var data = parseContent(result.content);
+          if (!data || (!data.options && !data.reply)) throw new Error('empty-reply');
+          data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
+          render(data);
+        })
+        .catch(function (err) {
+          var off = offlineFallback(message, stage || confirmedStage, goal, useStyle, tagged);
+          if (err && err.message && err.message !== 'no-bridge') {
+            off.read = '（云端失败：' + err.message + '）已切离线兜底。' + (off.read || '');
+          }
+          render(off);
+        });
+    });
   }
 
-  // 渲染
+  function buildSystem(stage, goal, useStyle, herName) {
+    var sp = window.WZ_SYSTEM_PROMPT || '';
+    if (stage) sp += '\n\n【本轮关系阶段（已确认）】' + stage + '　请按此阶段的打法给话术，不要越阶段。';
+    if (goal) sp += '\n【用户目标】' + goal;
+    if (herName) sp += '\n【对方的称呼】' + herName + '（话术里不必反复叫名字，自然即可）';
+    if (useStyle && window.WZ_USER_STYLE_PROMPT) sp += '\n\n' + window.WZ_USER_STYLE_PROMPT;
+    return sp;
+  }
+
+  function buildUserContent(message, tagged, herName) {
+    var s = '';
+    if (tagged) {
+      s += '【聊天记录（已标注说话人，我=用户本人，' + herName + '=对方）】\n' + tagged + '\n\n';
+    }
+    if (message) {
+      s += '【当前情况/她刚说了什么】\n' + message + '\n\n';
+    }
+    s += '请按 JSON 格式输出：三档话术（稳/撩/撤），每条带「她可能怎么回→我怎么接」。话术必须是能直接发的成品句。';
+    return s;
+  }
+
+  function offlineFallback(message, stage, goal, useStyle, tagged) {
+    try {
+      if (tagged && window.WZ_OFFLINE.analyzeLog) return window.WZ_OFFLINE.analyzeLog(tagged);
+      return window.WZ_OFFLINE.offlineReply(message, stage, goal, useStyle);
+    } catch (e) {
+      return { reply: '（离线话术库也没匹配到，换个说法再试试）', analysis: '' };
+    }
+  }
+
+  function render(raw) {
+    var res = normalize(raw);
+    if (raw.provider_label) res.provider_label = raw.provider_label;
+    history.push({ user: $('message').value.trim() || '【整段记录】', res: res });
+    localStorage.setItem(LS_HIST, JSON.stringify(history.slice(-20)));
+    renderStream();
+    $('go').disabled = false;
+    $('go').textContent = '给话术 🔥';
+    $('stageStatus').textContent = '';
+  }
+
+  // ---------- 渲染 ----------
+  function copyText(text, btn) {
+    if (navigator.clipboard) navigator.clipboard.writeText(text);
+    else {
+      var ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+    }
+    var old = btn.textContent;
+    btn.textContent = '已复制 ✓';
+    setTimeout(function () { btn.textContent = old; }, 1400);
+  }
+
   function buildCard(res) {
     var wrap = document.createElement('div');
-    wrap.className = 'res-card wrap';
+    wrap.className = 'res-card';
 
-    var head = document.createElement('div');
-    head.className = 'res-head';
-    var prov = res.provider_label ? ' <span class="prov">' + res.provider_label + '</span>' : '';
-    head.innerHTML = '<span>💬 建议回复' + prov + '</span>';
-    var copy = document.createElement('button');
-    copy.className = 'copy';
-    copy.textContent = '复制';
-    copy.onclick = function () {
-      navigator.clipboard.writeText(res.reply || '');
-      copy.textContent = '已复制 ✓';
-      setTimeout(function () { copy.textContent = '复制'; }, 1500);
-    };
-    head.appendChild(copy);
-    wrap.appendChild(head);
-    var b1 = document.createElement('div');
-    b1.className = 'res-body';
-    b1.textContent = res.reply || '';
-    wrap.appendChild(b1);
-
-    if (res.stage_guess || res.interest_level || (res.signals && res.signals.length)) {
-      var h2 = document.createElement('div');
-      h2.className = 'res-head'; h2.textContent = '📊 综合研判'; wrap.appendChild(h2);
-      var b2 = document.createElement('div');
-      b2.className = 'res-body';
-      var s = '';
-      if (res.stage_guess) s += '阶段判断：' + res.stage_guess + '\n';
-      if (res.interest_level) s += '兴趣度：' + res.interest_level + '\n';
-      if (res.signals && res.signals.length) s += '关键信号：\n- ' + res.signals.join('\n- ');
-      b2.textContent = s; wrap.appendChild(b2);
+    // 阶段 + 点破
+    if (res.stage) {
+      var sh = document.createElement('div');
+      sh.className = 'stage-line';
+      sh.innerHTML = '🎯 ' + res.stage + (res.stage_confidence ? ' <span class="conf">' + res.stage_confidence + '</span>' : '');
+      wrap.appendChild(sh);
+    }
+    if (res.read) {
+      var rd = document.createElement('div');
+      rd.className = 'read-line';
+      rd.textContent = res.read;
+      wrap.appendChild(rd);
     }
 
-    var h3 = document.createElement('div'); h3.className = 'res-head'; h3.textContent = '🧠 策略分析'; wrap.appendChild(h3);
-    var b3 = document.createElement('div'); b3.className = 'res-body'; b3.textContent = res.analysis || ''; wrap.appendChild(b3);
+    // 三档话术
+    (res.options || []).forEach(function (o) {
+      wrap.appendChild(buildOption(o));
+    });
 
-    var h4 = document.createElement('div'); h4.className = 'res-head'; h4.textContent = '🔥 心态提醒'; wrap.appendChild(h4);
-    var b4 = document.createElement('div'); b4.className = 'res-body'; b4.textContent = res.mindset || ''; wrap.appendChild(b4);
+    if (res.dont) {
+      var d = document.createElement('div');
+      d.className = 'dont-line';
+      d.textContent = '⛔ 别做：' + res.dont;
+      wrap.appendChild(d);
+    }
     return wrap;
+  }
+
+  function buildOption(o) {
+    var box = document.createElement('div');
+    box.className = 'opt tone-' + (o.tone === '撩' ? 'liao' : (o.tone === '撤' ? 'che' : 'wen'));
+
+    var head = document.createElement('div');
+    head.className = 'opt-head';
+    var tag = document.createElement('span');
+    tag.className = 'opt-tag';
+    tag.textContent = o.tone;
+    head.appendChild(tag);
+
+    var cp = document.createElement('button');
+    cp.className = 'opt-copy';
+    cp.textContent = '复制';
+    cp.onclick = function () { copyText(o.text, cp); };
+    head.appendChild(cp);
+    box.appendChild(head);
+
+    var text = document.createElement('div');
+    text.className = 'opt-text';
+    text.textContent = o.text;
+    box.appendChild(text);
+
+    if (o.why) {
+      var why = document.createElement('div');
+      why.className = 'opt-why';
+      why.textContent = '为什么：' + o.why;
+      box.appendChild(why);
+    }
+    if (o.predict) {
+      var pr = document.createElement('div');
+      pr.className = 'opt-predict';
+      pr.textContent = '→ ' + o.predict;
+      box.appendChild(pr);
+    }
+    if (o.then) {
+      var th = document.createElement('div');
+      th.className = 'opt-then';
+      th.textContent = '↳ 你接：' + o.then.replace(/^那你就[：:]\s*/, '');
+      box.appendChild(th);
+    }
+    return box;
   }
 
   function renderStream() {
@@ -227,10 +414,10 @@
       stream.appendChild(u);
       stream.appendChild(buildCard(turn.res));
     });
-    stream.scrollIntoView({ behavior: 'smooth' });
+    stream.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }
 
-  // 模型下拉
+  // ---------- 模型下拉 ----------
   function loadModels() {
     var sel = $('model');
     var saved = localStorage.getItem(LS_MODEL) || 'auto';
@@ -244,11 +431,8 @@
           opts.push({ id: m.id, label: label });
         });
       } catch (e) {}
-    } else {
-      // 桌面预览无桥接：仅展示离线
     }
     opts.push({ id: 'offline', label: '离线话术库（免费兜底）' });
-
     sel.innerHTML = '';
     opts.forEach(function (o) {
       var el = document.createElement('option');
@@ -261,30 +445,41 @@
   }
 
   function loadProfileUI() {
-    var p = loadProfile();
-    $('p_stage').value = p.stage || '';
-    $('p_goal').value = p.goal || '';
-    $('p_timeline').value = (p.timeline || []).join('\n');
-    $('p_notes').value = p.notes || '';
-  }
-  function saveProfileUI() {
-    saveProfile({
-      stage: $('p_stage').value,
-      goal: $('p_goal').value,
-      timeline: $('p_timeline').value.split('\n').map(function (s) { return s.trim(); }).filter(Boolean),
-      notes: $('p_notes').value
-    });
-    var t = $('saveTip'); t.textContent = '档案已保存 ✓'; t.style.opacity = 1;
-    setTimeout(function () { t.style.opacity = 0; }, 1500);
+    $('herName').value = localStorage.getItem(LS_HER) || '';
   }
 
-  // 初始化
   function init() {
     $('go').addEventListener('click', doChat);
-    $('saveProfile').addEventListener('click', saveProfileUI);
     $('clear').addEventListener('click', function () {
       if (confirm('清空本地对话历史？')) { history = []; localStorage.removeItem(LS_HIST); renderStream(); }
     });
+    // 三个输入区任意变动 → 自动重建聊天窗
+    var timer = null;
+    function scheduleRebuild() {
+      clearTimeout(timer);
+      timer = setTimeout(renderChatWin, 350);
+    }
+    ['chatlog', 'herLog', 'meLog'].forEach(function (id) {
+      $(id).addEventListener('input', scheduleRebuild);
+    });
+
+    // 「＋ 加一句」：光标落到该窗末尾新行，方便一条条贴
+    Array.prototype.forEach.call(document.querySelectorAll('.dual-add'), function (btn) {
+      btn.addEventListener('click', function () {
+        var id = btn.getAttribute('data-side') === 'me' ? 'meLog' : 'herLog';
+        var ta = $(id);
+        if (ta.value && !/\n$/.test(ta.value)) ta.value += '\n';
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = ta.value.length;
+        ta.scrollTop = ta.scrollHeight;
+      });
+    });
+    // 手动改阶段 → 视为已确认
+    $('stage').addEventListener('change', function () {
+      confirmedStage = $('stage').value;
+      $('stageConfirmed').textContent = confirmedStage ? '已确认阶段：' + confirmedStage : '';
+    });
+
     loadModels();
     loadProfileUI();
     renderStream();

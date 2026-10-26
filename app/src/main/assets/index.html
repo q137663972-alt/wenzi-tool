@@ -9,47 +9,71 @@
 <body>
 <div class="app">
   <header class="hero">
-    <h1>文字工具 <span class="badge">智能文字助手</span></h1>
-    <p class="sub">输入内容，智能生成你要的文字。</p>
-    <div id="modeTag" class="mode-tag">检测中…</div>
+    <h1>文字工具 <span class="badge">军师</span></h1>
+    <p class="sub">贴进聊天记录，直接给你能发出去的话。</p>
   </header>
 
   <div class="disclaimer">
-    ⚠️ AI 生成的是 <strong>建议草稿</strong>，真实沟通请真诚，请手动复制后发送。对话与档案仅存于本地。
+    ⚠️ 生成的是<strong>草稿话术</strong>，发之前自己过一眼。对话与档案只存本地。
   </div>
 
-  <section class="profile-card">
-    <div class="res-head"><span>🗂️ 关系档案（长期记忆）</span><span id="saveTip" class="tip"></span></div>
-    <div class="row">
-      <div class="field"><label>关系阶段</label><input id="p_stage" placeholder="如：暧昧期"></div>
-      <div class="field"><label>你的目标</label><input id="p_goal" placeholder="如：脱单"></div>
-    </div>
-    <label>进展时间线（每行一条）</label>
-    <textarea id="p_timeline" rows="2" placeholder="如：3.1 第一次约饭&#10;3.5 她主动问周末干嘛"></textarea>
-    <label>备注 / 她的特点</label>
-    <textarea id="p_notes" rows="2" placeholder="如：她慢热，讨厌查岗"></textarea>
-    <button id="saveProfile" class="mini">保存档案</button>
-  </section>
-
   <section class="input-card">
-    <label>她说了什么 / 当前情况</label>
-    <textarea id="message" rows="3" placeholder="例如：她回了我一句'哈哈'，然后就没动静了…"></textarea>
+    <label>🎯 她最后说的那句 <span class="hint">（要接着回的那句，必填）</span></label>
+    <textarea id="message" rows="2" placeholder="她回了句「哈哈」就没下文了…"></textarea>
 
-    <label>📋 粘贴完整聊天记录（军师会从头到尾综合分析）</label>
-    <textarea id="chatlog" rows="5" placeholder="把你们从认识到现在的对话整段粘进来，越完整研判越准…"></textarea>
+    <div class="dual-win">
+      <div class="dual-col col-her">
+        <div class="dual-head">◀ 她说的</div>
+        <textarea id="herLog" rows="5" placeholder="微信里长按她的气泡逐条复制，粘这&#10;一句一行，不用带名字"></textarea>
+        <button class="dual-add" data-side="her">＋ 加一句</button>
+      </div>
+      <div class="dual-col col-me">
+        <div class="dual-head">我说的 ▶</div>
+        <textarea id="meLog" rows="5" placeholder="你回的话粘这&#10;一句一行，不用带名字"></textarea>
+        <button class="dual-add" data-side="me">＋ 加一句</button>
+      </div>
+    </div>
+    <div class="dual-tip">
+      💡 两个窗按<strong>时间顺序各记各的</strong>，不用管谁先谁后；我会自动按上下文排序。
+      也可以在下面直接贴整段（带「我：」「她：」那种）。
+    </div>
+
+    <label>📋 或者：粘贴整段聊天记录 <span class="hint">（可选）</span></label>
+    <textarea id="chatlog" rows="3" placeholder="有整段就直接粘。会自动认出哪句是你、哪句是她。"></textarea>
+
+    <div id="chatWin" class="chat-win" style="display:none">
+      <div class="chat-head">
+        <span class="chat-side-label left">◀ 她说的</span>
+        <span class="chat-side-label right">我说的 ▶</span>
+      </div>
+      <div id="chatList" class="chat-list"></div>
+      <div class="parse-tip">点气泡可左右翻转改归属。改完直接点「给话术」。</div>
+    </div>
 
     <div class="row">
       <div class="field">
-        <label>关系阶段</label>
+        <label>她在你手机里的称呼</label>
+        <input id="herName" placeholder="可留空，默认「她」">
+      </div>
+      <div class="field">
+        <label>关系阶段（可留空自动判断）</label>
         <select id="stage">
-          <option value="">不确定</option>
-          <option>刚认识 / 陌生人</option>
-          <option>刚加微信</option>
-          <option>暧昧期</option>
-          <option>恋爱中</option>
-          <option>已分手 / 想挽回</option>
+          <option value="">自动判断</option>
+          <option>A 吸引（刚认识/刚加微信）</option>
+          <option>C 舒适（聊得来/有信任）</option>
+          <option>S 诱惑（氛围到了/该推进）</option>
         </select>
       </div>
+    </div>
+
+    <div id="stageConfirmed" class="stage-confirmed"></div>
+    <div id="stageCard" class="stage-card" style="display:none">
+      <div id="stageGuess" class="stage-guess"></div>
+      <div id="stageReason" class="stage-reason"></div>
+    </div>
+    <div id="stageStatus" class="stage-status"></div>
+
+    <div class="row">
       <div class="field">
         <label>你的目标</label>
         <select id="goal">
@@ -61,26 +85,27 @@
           <option>单纯参谋</option>
         </select>
       </div>
-    </div>
-    <div class="style-row">
-      <label class="switch"><input type="checkbox" id="useStyle" checked>
-        🗣️ 用我的风格回（回复像你本人）</label>
-    </div>
-    <div class="row">
       <div class="field">
-        <label>🤖 AI 模型（下拉切换）</label>
+        <label>🤖 模型</label>
         <select id="model"><option value="auto">自动（推荐）</option></select>
       </div>
     </div>
-    <button id="go">支个招 🔥</button>
+
+    <div class="style-row">
+      <label class="switch"><input type="checkbox" id="useStyle" checked>
+        🗣️ 用我本人的语气写（嘴硬心软那套）</label>
+    </div>
+
+    <button id="go">给话术 🔥</button>
   </section>
 
-  <div class="stream-head"><span>💬 对话流（连续记忆）</span><button id="clear" class="mini">清空</button></div>
+  <div class="stream-head"><span>💬 历史（连续记忆）</span><button id="clear" class="mini">清空</button></div>
   <section id="stream" class="result"></section>
 
-  <footer>本工具只给建议，真诚沟通最重要。</footer>
+  <footer>只给话术，不替你决定人生。真诚最省事。</footer>
 </div>
 <script src="./js/prompts.js"></script>
+<script src="./js/chatparse.js"></script>
 <script src="./js/offline.js"></script>
 <script src="./js/app.js"></script>
 </body>

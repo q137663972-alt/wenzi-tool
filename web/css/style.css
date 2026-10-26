@@ -46,17 +46,16 @@ body {
 }
 .disclaimer strong { color: #fff; }
 
-.profile-card, .input-card {
+.input-card {
   background: var(--card); border: 1px solid var(--line);
   border-radius: 16px; padding: 18px; margin-bottom: 18px;
 }
-.profile-card { border-color: #3a2c4a; }
 
 .res-head {
   display: flex; justify-content: space-between; align-items: center;
   font-weight: 700; font-size: 15px; margin-bottom: 8px; gap: 8px;
 }
-.profile-card label, .input-card label {
+.input-card label {
   display: block; font-size: 13px; color: var(--muted); margin: 10px 0 6px;
 }
 textarea, select, input {
@@ -109,3 +108,128 @@ button#go:disabled { opacity: .6; cursor: default; }
 
 footer { text-align: center; color: var(--muted); font-size: 12px; margin: 28px 0 12px; }
 .hidden { display: none; }
+
+/* ========== v2 新增：解析预览 / 阶段卡 / 三档话术 ========== */
+
+/* 解析预览区 */
+/* 阶段卡 */
+.stage-confirmed { font-size: 12px; color: #7CFFB2; margin: 4px 0 0; }
+.stage-card {
+  margin: 8px 0; padding: 10px 12px;
+  background: rgba(255,90,60,.07); border: 1px solid rgba(255,90,60,.3); border-radius: 12px;
+}
+.stage-guess { font-size: 14px; color: var(--text); }
+.stage-reason { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: pre-wrap; }
+.stage-status { font-size: 12px; color: var(--muted); margin: 6px 0; min-height: 16px; }
+.conf { font-size: 11px; color: var(--muted); background: rgba(154,154,165,.15); padding: 1px 6px; border-radius: 6px; margin-left: 4px; }
+
+/* 结果卡内：阶段 + 点破 */
+.stage-line { font-size: 13px; font-weight: 700; color: var(--main2); margin-bottom: 6px; }
+.read-line {
+  font-size: 15px; font-weight: 600; color: var(--text);
+  padding: 8px 0 12px; border-bottom: 1px dashed var(--line); margin-bottom: 12px;
+}
+.dont-line {
+  margin-top: 12px; padding: 8px 12px; font-size: 13px; color: #ff8a8a;
+  background: rgba(255,107,107,.08); border-left: 3px solid #ff6b6b; border-radius: 6px;
+}
+
+/* 三档话术 */
+.opt {
+  border: 1px solid var(--line); border-radius: 12px;
+  padding: 10px 12px; margin-bottom: 10px; background: var(--card2);
+}
+.opt.tone-liao { border-color: rgba(255,90,60,.45); }
+.opt.tone-che  { border-color: rgba(120,140,180,.4); }
+.opt-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.opt-tag {
+  font-size: 11px; font-weight: 700; padding: 2px 9px; border-radius: 999px;
+  background: rgba(255,255,255,.08); color: var(--text);
+}
+.opt.tone-wen  .opt-tag { background: rgba(124,255,178,.15); color: #7CFFB2; }
+.opt.tone-liao .opt-tag { background: rgba(255,90,60,.2);    color: var(--main2); }
+.opt.tone-che  .opt-tag { background: rgba(120,140,180,.2);  color: #9db4e0; }
+.opt-copy {
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  font-size: 11px; padding: 3px 10px; border-radius: 8px; cursor: pointer;
+}
+.opt-copy:hover { color: var(--main2); border-color: var(--main); }
+.opt-text {
+  font-size: 16px; font-weight: 600; color: var(--text);
+  padding: 6px 0; line-height: 1.5; word-break: break-word;
+}
+.opt-why     { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.opt-predict { font-size: 12px; color: #9db4e0; margin-top: 6px; }
+.opt-then    { font-size: 13px; color: #7CFFB2; margin-top: 3px; }
+
+/* ============ v3 聊天窗口（她说 / 我说，微信式双窗） ============ */
+.chat-win {
+  margin: 10px 0; padding: 10px;
+  background: var(--card2); border: 1px solid var(--line); border-radius: 14px;
+}
+.chat-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px dashed var(--line);
+}
+.chat-side-label { font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
+.chat-side-label.left  { background: rgba(154,154,165,.18); color: #cfcfd6; }
+.chat-side-label.right { background: rgba(255,90,60,.18);  color: var(--main2); }
+.chat-list {
+  max-height: 340px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; padding: 2px 0;
+}
+.chat-conf { font-size: 11px; color: var(--muted); text-align: center; padding-bottom: 4px; }
+.chat-conf b { color: var(--text); }
+.chat-conf b.high { color: #7CFFB2; }
+.chat-conf b.mid  { color: #ffc857; }
+.chat-conf b.low  { color: #ff6b6b; }
+.chat-row {
+  display: flex; align-items: flex-end; gap: 6px; max-width: 100%;
+}
+.chat-row.left  { justify-content: flex-start; }
+.chat-row.right { justify-content: flex-end; }
+.chat-who {
+  flex: 0 0 auto; font-size: 10px; color: var(--muted); padding-bottom: 4px; max-width: 64px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-bubble {
+  max-width: 76%; padding: 8px 12px; border-radius: 14px;
+  font-size: 14px; line-height: 1.45; word-break: break-word; cursor: pointer;
+}
+.chat-bubble.her {
+  background: #26262c; color: #e8e8ee;
+  border-bottom-left-radius: 4px;
+}
+.chat-bubble.me {
+  background: linear-gradient(135deg, #ff5a3c, #ff7a4d); color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.chat-bubble.unsure { border: 1px dashed rgba(255,200,87,.55); }
+.chat-bubble:active { filter: brightness(1.15); }
+.parse-tip { font-size: 11px; color: var(--muted); margin-top: 8px; }
+
+/* ============ v3.1 双输入窗（她说 / 我说） ============ */
+.hint { font-size: 11px; color: var(--muted); font-weight: 400; }
+.dual-win { display: flex; gap: 8px; margin: 8px 0 6px; }
+.dual-col { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; }
+.dual-head {
+  font-size: 11px; font-weight: 700; text-align: center;
+  padding: 3px 0; border-radius: 8px 8px 0 0; margin-bottom: 0;
+}
+.col-her .dual-head { background: rgba(154,154,165,.18); color: #cfcfd6; }
+.col-me  .dual-head { background: rgba(255,90,60,.20);  color: var(--main2); }
+.dual-col textarea {
+  flex: 1 1 auto; margin: 0 !important; border-radius: 0 !important;
+  border-top: none !important; font-size: 13px; line-height: 1.5; min-height: 108px;
+}
+.col-her textarea { border-color: rgba(154,154,165,.35) !important; }
+.col-me  textarea { border-color: rgba(255,90,60,.35) !important; }
+.dual-add {
+  margin-top: 4px; background: transparent; font-size: 11px; padding: 5px 0;
+  border-radius: 0 0 8px 8px; cursor: pointer;
+}
+.col-her .dual-add { border: 1px solid rgba(154,154,165,.35); border-top: none; color: var(--muted); }
+.col-me  .dual-add { border: 1px solid rgba(255,90,60,.35);  border-top: none; color: var(--main2); }
+.dual-add:active { background: rgba(255,255,255,.06); }
+.dual-tip { font-size: 11px; color: var(--muted); line-height: 1.6; margin-bottom: 10px; }
+.dual-tip strong { color: var(--text); }

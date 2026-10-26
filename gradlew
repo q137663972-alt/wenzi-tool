@@ -29,13 +29,13 @@ if [ ! -e "$APP_HOME/gradle/wrapper/gradle-wrapper.jar" ]; then
 fi
 
 # Use the maximal available settings for stack size available to the JVM.
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+DEFAULT_JVM_OPTS='-Xmx64m -Xms64m'
 
 # Collect JVM options
 GRADLE_OPTS="$GRADLE_OPTS $DEFAULT_JVM_OPTS"
 JAVA_OPTS="$JAVA_OPTS $DEFAULT_JVM_OPTS"
 
-exec "${JAVA_HOME:-java}/bin/java" -Xmx512m -Xms64m \
+exec "$JAVA_HOME/bin/java" $GRADLE_OPTS $JAVA_OPTS \
   -classpath "$CLASSPATH" \
   org.gradle.wrapper.GradleWrapperMain \
   "$@"

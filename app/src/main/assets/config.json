@@ -2,21 +2,8 @@
   "hot_base": "https://q137663972-alt.github.io/wenzi-tool/",
   "default_model": "zhipu-glm",
   "providers": {
-    "zhipu-glm": {
-      "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "api_key": "40cc82e711cf403694d114268e993d15.xqP7yDPYW0Wre8g8",
-      "model": "glm-4-flash"
-    },
-    "tencent-hy3": {
-      "base_url": "https://tokenhub.tencentmaas.com/v1",
-      "api_key": "sk-wPhRYz3gytxsKDPilr7OVPLYu9cwrdjRr5SHrbr21CE7vjN3",
-      "model": "hy3"
-    },
-    "deepseek-chat": {
-      "base_url": "https://api.deepseek.com/v1",
-      "api_key": "sk-19b99a1f526e4d2fb545aa8a0fdf21b1",
-      "model": "deepseek-chat"
-    }
-  },
-  "hot_mirror": "https://cdn.jsdelivr.net/gh/q137663972-alt/wenzi-tool@gh-pages/"
+    "zhipu-glm":     { "base_url": "https://open.bigmodel.cn/api/paas/v4", "api_key": "40cc82e711cf403694d114268e993d15.xqP7yDPYW0Wre8g8", "model": "glm-4-flash" },
+    "tencent-hy3":   { "base_url": "https://tokenhub.tencentmaas.com/v1", "api_key": "sk-wPhRYz3gytxsKDPilr7OVPLYu9cwrdjRr5SHrbr21CE7vjN3", "model": "hy3" },
+    "deepseek-chat": { "base_url": "https://api.deepseek.com/v1", "api_key": "sk-19b99a1f526e4d2fb545aa8a0fdf21b1", "model": "deepseek-chat" }
+  }
 }

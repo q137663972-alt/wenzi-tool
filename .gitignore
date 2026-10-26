@@ -1,8 +1,15 @@
-keystore/
-.gradle/
-build/
-app/build/
-local.properties
+# 生成物（CI/本地 gen-pack 产出，不入库）
+hot/
+
+# Android
 *.iml
-.idea/
-node_modules/
+.gradle/
+local.properties
+.keystore
+app/release/
+
+# 构建产物
+build/
+
+# 该文件需要 token 有 workflow 权限才能推；无权限时本地保留即可
+.github/workflows/
