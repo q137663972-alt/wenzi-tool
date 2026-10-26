@@ -55,16 +55,30 @@ wenzi-tool/
 
 ---
 
-## 四、配置热更基址（HOT_BASE）
+## 四、热更基址（已配置好，无需操作）
 
-1. 新建 GitHub 仓库 `wenzi-tool`，**Settings → Pages → Source = Deploy from a branch = gh-pages**。
-2. 把本目录推到 `main`，CI 会自动打包并把 `hot/` 发到 gh-pages。
-3. 改 `app/src/main/assets/config.json` 里的 `hot_base` 为：
-   `https://<你的用户名>.github.io/wenzi-tool/`
-   （改了重新编译一次 APK；之后 H5 变动只推 GitHub，不再出包。）
+仓库：**https://github.com/q137663972-alt/wenzi-tool**
+热更站点：**https://q137663972-alt.github.io/wenzi-tool/**
 
-> 也可指向任意静态托管（对象存储/CDN/本地服务器）。本地调试：在 `hot/` 目录跑
-> `python -m http.server 8080`，把 `hot_base` 设为 `http://<电脑IP>:8080/`。
+- GitHub Pages 已设为 `main` 分支的 `/docs` 目录，站点根 = `docs/` 内容。
+- `app/src/main/assets/config.json` 的 `hot_base` 已指向该站点，**编译出来的 APK 直接可用**。
+- 已实测线上四件套：`update.json` 200、`pack/manifest.json` 200、`docs/code.<build>.zip` 200（根与 pack/ 双发）、下载 sha256 与 manifest 记录一致。
+
+### 以后改 H5 怎么发布（一条命令）
+
+```bash
+# 1. 改 web/ 下的文件
+# 2. 重新打包（自动生成带 build 指纹的 zip 到 docs/）
+node tools/gen-pack.mjs
+# 3. 提交推送（或用 .github/workflows/build.yml 自动完成）
+git add -A && git commit -m "更新" && git push
+```
+
+用户侧：打开 App → 后台拉包 → 完全退出 → 再打开，即最新。**不用重新出 APK。**
+
+> 若想换托管（对象存储/CDN/自建服务器），只改 `config.json` 的 `hot_base`，保持
+> `update.json` 与 `pack/manifest.json`+zip 的目录结构即可。本地调试可在 `docs/` 跑
+> `python -m http.server 8080`，`hot_base` 设为 `http://<电脑IP>:8080/`。
 
 ---
 
