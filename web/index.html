@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文字工具</title>
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<div class="app">
+  <header class="hero">
+    <h1>文字工具 <span class="badge">智能文字助手</span></h1>
+    <p class="sub">输入内容，智能生成你要的文字。</p>
+    <div id="modeTag" class="mode-tag">检测中…</div>
+  </header>
+
+  <div class="disclaimer">
+    ⚠️ AI 生成的是 <strong>建议草稿</strong>，真实沟通请真诚，请手动复制后发送。对话与档案仅存于本地。
+  </div>
+
+  <section class="profile-card">
+    <div class="res-head"><span>🗂️ 关系档案（长期记忆）</span><span id="saveTip" class="tip"></span></div>
+    <div class="row">
+      <div class="field"><label>关系阶段</label><input id="p_stage" placeholder="如：暧昧期"></div>
+      <div class="field"><label>你的目标</label><input id="p_goal" placeholder="如：脱单"></div>
+    </div>
+    <label>进展时间线（每行一条）</label>
+    <textarea id="p_timeline" rows="2" placeholder="如：3.1 第一次约饭&#10;3.5 她主动问周末干嘛"></textarea>
+    <label>备注 / 她的特点</label>
+    <textarea id="p_notes" rows="2" placeholder="如：她慢热，讨厌查岗"></textarea>
+    <button id="saveProfile" class="mini">保存档案</button>
+  </section>
+
+  <section class="input-card">
+    <label>她说了什么 / 当前情况</label>
+    <textarea id="message" rows="3" placeholder="例如：她回了我一句'哈哈'，然后就没动静了…"></textarea>
+
+    <label>📋 粘贴完整聊天记录（军师会从头到尾综合分析）</label>
+    <textarea id="chatlog" rows="5" placeholder="把你们从认识到现在的对话整段粘进来，越完整研判越准…"></textarea>
+
+    <div class="row">
+      <div class="field">
+        <label>关系阶段</label>
+        <select id="stage">
+          <option value="">不确定</option>
+          <option>刚认识 / 陌生人</option>
+          <option>刚加微信</option>
+          <option>暧昧期</option>
+          <option>恋爱中</option>
+          <option>已分手 / 想挽回</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>你的目标</label>
+        <select id="goal">
+          <option value="">不确定</option>
+          <option>脱单</option>
+          <option>暧昧升温</option>
+          <option>约出来</option>
+          <option>挽回 / 复联</option>
+          <option>单纯参谋</option>
+        </select>
+      </div>
+    </div>
+    <div class="style-row">
+      <label class="switch"><input type="checkbox" id="useStyle" checked>
+        🗣️ 用我的风格回（回复像你本人）</label>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>🤖 AI 模型（下拉切换）</label>
+        <select id="model"><option value="auto">自动（推荐）</option></select>
+      </div>
+    </div>
+    <button id="go">支个招 🔥</button>
+  </section>
+
+  <div class="stream-head"><span>💬 对话流（连续记忆）</span><button id="clear" class="mini">清空</button></div>
+  <section id="stream" class="result"></section>
+
+  <footer>本工具只给建议，真诚沟通最重要。</footer>
+</div>
+<script src="./js/prompts.js"></script>
+<script src="./js/offline.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>

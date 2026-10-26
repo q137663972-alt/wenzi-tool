@@ -1,0 +1,111 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+.prov { font-size: 11px; color: #ffb347; font-weight: 600; background: rgba(255,179,71,.12); padding: 1px 7px; border-radius: 8px; margin-left: 6px; }
+
+.style-row { margin: 6px 0 14px; }
+.switch { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; user-select: none; }
+.switch input { width: 16px; height: 16px; accent-color: var(--main); cursor: pointer; }
+:root {
+  --bg: #0e0e10;
+  --card: #1a1a1f;
+  --card2: #202028;
+  --main: #ff5a3c;
+  --main2: #ff8a45;
+  --text: #f2f2f5;
+  --muted: #9a9aa5;
+  --line: #2c2c34;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  line-height: 1.6;
+  padding: 16px;
+}
+.app { max-width: 720px; margin: 0 auto; }
+
+.hero { text-align: center; padding: 24px 0 8px; }
+.hero h1 { font-size: 30px; font-weight: 800; letter-spacing: 1px; }
+.badge {
+  font-size: 13px; font-weight: 600; color: #fff;
+  background: linear-gradient(135deg, var(--main), var(--main2));
+  padding: 3px 10px; border-radius: 999px; vertical-align: middle; margin-left: 6px;
+}
+.sub { color: var(--muted); margin-top: 8px; font-size: 14px; }
+
+.mode-tag {
+  display: inline-block; margin-top: 12px; font-size: 13px;
+  padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line);
+}
+.mode-tag.on { color: #7CFFB2; border-color: #2c5; }
+.mode-tag.off { color: var(--main2); border-color: #553; }
+
+.disclaimer {
+  background: #2a1d18; border: 1px solid #5a3a2c; color: #ffd2bf;
+  font-size: 13px; padding: 10px 14px; border-radius: 12px; margin: 16px 0;
+}
+.disclaimer strong { color: #fff; }
+
+.profile-card, .input-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 16px; padding: 18px; margin-bottom: 18px;
+}
+.profile-card { border-color: #3a2c4a; }
+
+.res-head {
+  display: flex; justify-content: space-between; align-items: center;
+  font-weight: 700; font-size: 15px; margin-bottom: 8px; gap: 8px;
+}
+.profile-card label, .input-card label {
+  display: block; font-size: 13px; color: var(--muted); margin: 10px 0 6px;
+}
+textarea, select, input {
+  width: 100%; background: var(--card2); color: var(--text);
+  border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+  font-size: 15px; font-family: inherit; outline: none;
+}
+textarea:focus, select:focus, input:focus { border-color: var(--main); }
+.row { display: flex; gap: 12px; }
+.field { flex: 1; }
+
+button#go {
+  width: 100%; margin-top: 16px; padding: 14px;
+  font-size: 16px; font-weight: 700; color: #fff; cursor: pointer;
+  background: linear-gradient(135deg, var(--main), var(--main2));
+  border: none; border-radius: 12px; transition: transform .08s, opacity .2s;
+}
+button#go:hover { transform: translateY(-1px); }
+button#go:disabled { opacity: .6; cursor: default; }
+
+.mini {
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  font-size: 12px; padding: 6px 12px; border-radius: 8px; cursor: pointer; margin-top: 10px;
+}
+.mini:hover { color: var(--text); border-color: var(--main); }
+.tip { font-size: 12px; color: #7CFFB2; opacity: 0; transition: opacity .3s; }
+
+.result { display: flex; flex-direction: column; gap: 14px; }
+.res-card {
+  background: var(--card); border: 1px solid var(--line);
+  border-radius: 16px; padding: 16px;
+}
+.res-card.wrap { border-color: var(--line); }
+.res-card .copy {
+  background: transparent; border: 1px solid var(--line); color: var(--muted);
+  font-size: 12px; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+}
+.res-card .copy:hover { color: var(--text); border-color: var(--main); }
+.res-body { font-size: 15px; white-space: pre-wrap; }
+
+.bubble {
+  background: var(--card2); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 14px; margin-bottom: 10px;
+  font-size: 14px; color: var(--muted);
+}
+.stream-head {
+  display: flex; justify-content: space-between; align-items: center;
+  margin: 6px 2px 12px; font-weight: 700; color: var(--text);
+}
+
+footer { text-align: center; color: var(--muted); font-size: 12px; margin: 28px 0 12px; }
+.hidden { display: none; }

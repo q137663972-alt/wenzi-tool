@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.WenziTool" parent="Theme.MaterialComponents.NoActionBar">
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">false</item>
+        <item name="android:statusBarColor">#11131a</item>
+        <item name="android:navigationBarColor">#11131a</item>
+        <item name="android:colorBackground">#11131a</item>
+    </style>
+</resources>

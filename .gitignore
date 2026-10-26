@@ -1,0 +1,12 @@
+# 生成物（CI/本地 gen-pack 产出，不入库）
+hot/
+
+# Android
+*.iml
+.gradle/
+local.properties
+.keystore
+app/release/
+
+# 构建产物
+build/
