@@ -14,6 +14,9 @@ import { join, relative, sep, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
+// H5 版本标签：永远跟「已装 APK 版本」一致，绝不随 H5 内容升号（APK 版本纪律）
+const APP_LABEL = '3.1.0';
+
 const ROOT = dirname(fileURLToPath(import.meta.url)) + sep + '..';
 const SRC = join(ROOT, 'web');
 // 直接产出到 docs/：GitHub Pages 设为 main 分支 /docs 即可访问
@@ -110,6 +113,10 @@ const entries = allFiles.map((p) => ({
   name: relative(SRC, p),
   data: readFileSync(p),
 }));
+// 注入版本元数据：不参与 build 指纹（在指纹算完之后再写），避免循环依赖。
+// H5 据此显示「当前 H5 版本(build)」；原生层也会把它随 zip 解压到 files/hot/version.json。
+const versionMeta = JSON.stringify({ app: APP_LABEL, build, ts: new Date().toISOString() }, null, 2);
+entries.push({ name: 'version.json', data: Buffer.from(versionMeta, 'utf8') });
 const codeZip = zip(entries);
 const codeName = `code.${build}.zip`;
 
@@ -127,7 +134,7 @@ writeFileSync(join(PACK_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2)
 
 const update = {
   min_apk: 2,
-  app: '3.1.0',
+  app: APP_LABEL,
   sig: 'local',
   build,
   ts: new Date().toISOString(),

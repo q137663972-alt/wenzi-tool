@@ -113,12 +113,21 @@
   <div class="stream-head"><span>💬 历史（连续记忆）</span><button id="clear" class="mini">清空</button></div>
   <section id="stream" class="result"></section>
 
+  <section class="ver-bar" id="verBar">
+    <span class="ver-i">ℹ️</span>
+    <span class="ver-text">APK <b id="verApk">…</b> · H5 <b id="verH5">…</b></span>
+    <span id="verState" class="ver-state">启动中…</span>
+    <button id="verCheck" class="mini">检查更新</button>
+    <button id="verApply" class="mini ver-apply" style="display:none">立即应用</button>
+  </section>
+
   <footer>只给话术，不替你决定人生。真诚最省事。</footer>
 </div>
 <script src="./js/prompts.js"></script>
 <script src="./js/chatparse.js"></script>
 <script src="./js/shotparse.js"></script>
 <script src="./js/offline.js"></script>
+<script src="./js/update.js"></script>
 <script src="./js/app.js"></script>
 </body>
 </html>
