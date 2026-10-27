@@ -263,3 +263,45 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin: 28px 
   background: transparent !important; color: var(--muted) !important;
   border: 1px dashed rgba(255,200,87,.5); font-style: italic; font-size: 13px;
 }
+
+/* ============ v3.2 对话动力学 / 接话逻辑 ============ */
+.dyn-line {
+  font-size: 12px; color: var(--muted); line-height: 1.6;
+  padding: 6px 10px; margin: 0 0 8px;
+  background: rgba(124,255,178,.06); border-left: 3px solid rgba(124,255,178,.5);
+  border-radius: 6px;
+}
+.dyn-risk {
+  font-weight: 700; padding: 1px 7px; border-radius: 999px; font-size: 11px;
+  margin-left: 4px;
+}
+.dyn-risk.mid { background: rgba(255,200,87,.18); color: #ffc857; }
+.dyn-risk.hi  { background: rgba(255,107,107,.18); color: #ff8a8a; }
+.dyn-risk.ext { background: rgba(255,60,60,.28); color: #ff5a5a; }
+.dyn-lbl { color: #9db4e0; font-size: 11px; margin-left: 4px; }
+.dyn-note {
+  font-size: 12px; color: #ffc857; line-height: 1.6;
+  padding: 4px 10px 8px; margin: -4px 0 8px;
+}
+.thread-line {
+  font-size: 12px; color: var(--text); line-height: 1.6;
+  padding: 6px 10px; margin: 0 0 12px;
+  background: rgba(255,255,255,.04); border-left: 3px solid var(--main); border-radius: 6px;
+}
+
+/* ============ 版本与更新条 ============ */
+.ver-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted); line-height: 1.5;
+  padding: 10px 12px; margin: 6px 0 0;
+  background: rgba(255,255,255,.03); border: 1px solid rgba(255,255,255,.06);
+  border-radius: 10px;
+}
+.ver-bar .ver-i { font-size: 14px; }
+.ver-bar b { color: var(--text); font-weight: 600; }
+.ver-bar .ver-state { flex: 1 1 100%; color: var(--muted); }
+.ver-bar .ver-state:empty { display: none; }
+.ver-bar .ver-apply {
+  background: var(--main); color: #06120a; border: none; font-weight: 700;
+}
+.ver-bar .ver-apply:hover { filter: brightness(1.08); }

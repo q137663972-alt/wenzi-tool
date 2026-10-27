@@ -15,7 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 // H5 版本标签：永远跟「已装 APK 版本」一致，绝不随 H5 内容升号（APK 版本纪律）
-const APP_LABEL = '3.1.0';
+// APK 3.2.0 (versionCode 5) 引入真·强制更新原生桥
+const APP_LABEL = '3.2.0';
 
 const ROOT = dirname(fileURLToPath(import.meta.url)) + sep + '..';
 const SRC = join(ROOT, 'web');

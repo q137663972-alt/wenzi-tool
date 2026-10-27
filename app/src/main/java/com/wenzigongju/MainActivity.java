@@ -297,32 +297,61 @@ public class MainActivity extends AppCompatActivity {
 
     // ---------------- 热更新（原生层） ----------------
     private void backgroundUpdate() {
+        // 启动静默更新：不强制、不打扰，拿到新版只提示"已就绪"
+        runUpdate(false);
+    }
+
+    /**
+     * 执行一次热更。
+     *
+     * @param force true = 用户主动点「立即应用」/「检查更新」：
+     *              即使本地 build 与线上一致也重新下载校验一遍（修掉"文件坏了但 build 标记还在"的假最新），
+     *              成功后清掉 WebView 缓存并重载页面，让新内容立刻生效，无需重启 App。
+     *              false = 启动后台静默更新：同 build 直接跳过，不刷新页面。
+     */
+    private void runUpdate(final boolean force) {
         new Thread(() -> {
             try {
                 // 1) 读 update.json（清单索引，含 manifest 位置与 app/sig 等）
                 String upd = httpGetText(HOT_BASE + "update.json");
-                if (upd == null) return;
+                if (upd == null) {
+                    if (force) notifyJs("fail", "拉取更新清单失败，检查网络后重试");
+                    return;
+                }
                 JSONObject update = new JSONObject(upd);
                 int minApk = update.optInt("min_apk", 1);
-                if (versionCode() < minApk) return;   // 壳太旧，等用户装新包
+                if (versionCode() < minApk) {
+                    // 壳太旧：这次只能靠装新 APK，明确告知，不假装成功
+                    if (force) notifyJs("apk", "这次更新需要新版 APK（当前 versionCode " + versionCode()
+                            + " < 要求的 " + minApk + "），光热更改不动，请装新包");
+                    return;
+                }
                 String manifestUrl = update.optString("manifest", HOT_BASE + "pack/manifest.json");
 
                 // 2) 读 manifest（列出各 pack 的真实文件名 + sha256）
                 String man = httpGetText(manifestUrl);
-                if (man == null) return;
+                if (man == null) {
+                    if (force) notifyJs("fail", "拉取包清单失败");
+                    return;
+                }
                 JSONObject manifest = new JSONObject(man);
                 String build = manifest.optString("build", "");
                 JSONArray packs = manifest.optJSONArray("packs");
-                if (packs == null) return;
+                if (packs == null) {
+                    if (force) notifyJs("fail", "包清单格式异常");
+                    return;
+                }
 
-                // 已是同版本则跳过
+                // 已是同版本则跳过（force 模式不跳过，重下重校一遍）
                 File buildFile = new File(getFilesDir(), "hot/__build__");
-                if (buildFile.isFile()) {
+                if (!force && buildFile.isFile()) {
                     try {
                         JSONObject cur = new JSONObject(readFile(buildFile));
                         if (build.equals(cur.optString("build", ""))) return;
                     } catch (Exception ignore) {}
                 }
+
+                if (force) notifyJs("downloading", "正在下载最新内容…");
 
                 File hotDir = new File(getFilesDir(), "hot");
                 File tmp = new File(getFilesDir(), "hot.new");
@@ -339,11 +368,19 @@ public class MainActivity extends AppCompatActivity {
                         break;
                     }
                 }
-                if (!allOk) { deleteRecursively(tmp); return; }
+                if (!allOk) {
+                    deleteRecursively(tmp);
+                    if (force) notifyJs("fail", "下载或校验失败，已保留旧版本（内容不会被弄坏）");
+                    return;
+                }
 
                 // 3) 原子替换：删旧 hot → 新 hot.new 改名 hot
-                deleteRecursively(hotDir);
-                if (!tmp.renameTo(hotDir)) {
+                //    先改名成 hot.old 再删，失败时还能回滚，避免中途异常导致 hot 目录空了
+                File oldDir = new File(getFilesDir(), "hot.old");
+                deleteRecursively(oldDir);
+                if (hotDir.exists()) hotDir.renameTo(oldDir);
+                boolean swapped = tmp.renameTo(hotDir);
+                if (!swapped) {
                     // 改名失败兜底：直接拷贝
                     copyDir(tmp, hotDir);
                     deleteRecursively(tmp);
@@ -351,17 +388,43 @@ public class MainActivity extends AppCompatActivity {
                 // 写 build 标记（带 min_apk，供首屏门槛判断）
                 writeFile(new File(hotDir, "__build__"),
                         new JSONObject().put("build", build).put("min_apk", minApk).toString());
+                deleteRecursively(oldDir);
 
-                Log.i(TAG, "hot update applied, build=" + build);
+                Log.i(TAG, "hot update applied, build=" + build + " force=" + force);
                 final boolean wasBuiltin = !idxExistedBefore;
-                ui.post(() -> {
-                    Toast.makeText(MainActivity.this, "新内容已就绪", Toast.LENGTH_SHORT).show();
-                    if (wasBuiltin) webView.reload();  // 本次就在用内置 → 直接刷新到新内容
+                final String newBuild = build;
+                runOnUiThread(() -> {
+                    // 强制模式：清缓存 + 重载，新内容立刻生效（这是「强制更新」的关键）
+                    if (force) {
+                        webView.clearCache(true);
+                        if (wasBuiltin || !"https://local.hot/index.html".equals(webView.getUrl())) {
+                            webView.loadUrl("https://local.hot/index.html");
+                        } else {
+                            webView.reload();
+                        }
+                        notifyJs("applied", "已更新到 " + newBuild.substring(0, Math.min(8, newBuild.length())));
+                        Toast.makeText(MainActivity.this, "已更新到最新版", Toast.LENGTH_SHORT).show();
+                    } else {
+                        Toast.makeText(MainActivity.this, "新内容已就绪", Toast.LENGTH_SHORT).show();
+                        // 静默更新：若本次就在用内置，直接刷新到热更内容；否则不打扰用户当前操作
+                        if (wasBuiltin) webView.reload();
+                    }
                 });
             } catch (Exception e) {
                 Log.w(TAG, "hot update failed", e);
+                if (force) notifyJs("fail", "更新异常：" + e.getMessage());
             }
         }).start();
+    }
+
+    /** 从后台线程安全地把状态回传给 H5 的 window.__onUpdate(state,msg) */
+    private void notifyJs(final String state, final String msg) {
+        runOnUiThread(() -> {
+            try {
+                JSONObject o = new JSONObject().put("state", state).put("msg", msg);
+                webView.evaluateJavascript("window.__onUpdate && window.__onUpdate(" + o.toString() + ");", null);
+            } catch (JSONException ignore) {}
+        });
     }
 
     private volatile boolean idxExistedBefore = false;
@@ -441,6 +504,37 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public String getConfig() {
             return appConfig == null ? "{}" : appConfig.toString();
+        }
+
+        // 当前 APK 版本信息（H5 版本条直接显示，不必从 UA 里猜）
+        @JavascriptInterface
+        public String getAppVersion() {
+            try {
+                return new JSONObject().put("versionCode", versionCode())
+                        .put("versionName", versionName()).toString();
+            } catch (JSONException e) {
+                return "{}";
+            }
+        }
+
+        // 当前本地已装 H5 的 build 指纹（没有热更时返回空串）
+        @JavascriptInterface
+        public String getLocalBuild() {
+            File bf = new File(getFilesDir(), "hot/__build__");
+            if (!bf.isFile()) return "";
+            try {
+                return new JSONObject(readFile(bf)).optString("build", "");
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        // 真·强制更新：后台重拉 → 校验 → 原子替换 → 清缓存 → 重载，全程无需重启 App。
+        // 进度与结果通过 window.__onUpdate(state, msg) 回调：
+        //   checking / downloading / applied / apk / fail
+        @JavascriptInterface
+        public void applyUpdate() {
+            runUpdate(true);
         }
 
         // H5 把组装好的 messages 交给原生；原生按 model_id 选 provider，发起 HTTPS 调用，返回原文
