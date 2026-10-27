@@ -348,7 +348,12 @@
   // ---------- 结构归一化：兼容旧{reply,analysis,mindset}与新{stage,read,options} ----------
   function normalize(r) {
     r = r || {};
-    var out = { stage: r.stage || '', stage_confidence: r.stage_confidence || '', read: r.read || '', dont: r.dont || '', profile_update: r.profile_update || '', options: [] };
+    var out = {
+      stage: r.stage || '', stage_confidence: r.stage_confidence || '',
+      read: r.read || '', dont: r.dont || '', profile_update: r.profile_update || '',
+      dynamics: r.dynamics || null, thread: r.thread || '',
+      options: []
+    };
 
     if (Array.isArray(r.options) && r.options.length) {
       out.options = r.options.slice(0, 3).map(function (o, i) {
@@ -440,7 +445,7 @@
 
     chain.then(function () {
       var sp = buildSystem(stage || confirmedStage, goal, useStyle, herName);
-      var userContent = buildUserContent(message, tagged, herName);
+      var userContent = buildUserContent(message, tagged, herName, (p && p.turns) || []);
       var messages = [{ role: 'system', content: sp }, { role: 'user', content: userContent }];
 
       if (modelId === 'offline') {
@@ -475,22 +480,33 @@
     return sp;
   }
 
-  function buildUserContent(message, tagged, herName) {
+  function buildUserContent(message, tagged, herName, turns) {
     var s = '';
     if (tagged) {
       s += '【聊天记录（已标注说话人，我=用户本人，' + herName + '=对方）】\n' + tagged + '\n\n';
     }
-    if (message) {
-      s += '【当前情况/她刚说了什么】\n' + message + '\n\n';
+    // 锚点：最近 3 回合 + 她最后一句，确保话术接得住上文（治"前后不通"）
+    if (turns && turns.length) {
+      var recent = turns.slice(-3);
+      s += '【最近 3 回合（从上到下，时间序）】\n';
+      recent.forEach(function (t) {
+        s += (t.who === 'me' ? '我' : herName) + '：' + (t.text || '（空）') + '\n';
+      });
+      var lastHer = null;
+      for (var i = turns.length - 1; i >= 0; i--) { if (turns[i].who === 'her') { lastHer = turns[i].text; break; } }
+      if (lastHer) s += '\n【锚点·她最后一句（话术必须先接这句）】\n' + lastHer + '\n\n';
     }
-    s += '请按 JSON 格式输出：三档话术（稳/撩/撤），每条带「她可能怎么回→我怎么接」。话术必须是能直接发的成品句。';
+    if (message) {
+      s += '【当前情况/她刚说了什么（补充）】\n' + message + '\n\n';
+    }
+    s += '请按 JSON 格式输出：先用 dynamics 看清这一句的动作/风险，再用 thread 写清这一轮怎么接上文，最后给三档话术（稳/撩/撤），每条带「她可能怎么回→我怎么接」，且每条 text 必须先接住她最后一句。话术必须是能直接发的成品句。';
     return s;
   }
 
   function offlineFallback(message, stage, goal, useStyle, tagged) {
     try {
       if (tagged && window.WZ_OFFLINE.analyzeLog) return window.WZ_OFFLINE.analyzeLog(tagged);
-      return window.WZ_OFFLINE.offlineReply(message, stage, goal, useStyle);
+      return window.WZ_OFFLINE.offlineReply(message, stage, goal, useStyle, tagged);
     } catch (e) {
       return { reply: '（离线话术库也没匹配到，换个说法再试试）', analysis: '' };
     }
@@ -536,6 +552,38 @@
       rd.className = 'read-line';
       rd.textContent = res.read;
       wrap.appendChild(rd);
+    }
+
+    // 对话动力学（来自文件 taxonomy 的识别结构）
+    var dyn = res.dynamics;
+    if (dyn) {
+      var dh = document.createElement('div');
+      dh.className = 'dyn-line';
+      var parts = [];
+      if (dyn.she_move && dyn.she_move !== '无') parts.push('她：' + dyn.she_move);
+      if (dyn.user_move && dyn.user_move !== '无') parts.push('你：' + dyn.user_move);
+      var riskTag = '';
+      if (dyn.risk && dyn.risk !== '低') {
+        var lvl = dyn.risk === '极高' ? 'ext' : (dyn.risk === '高' ? 'hi' : 'mid');
+        riskTag = ' <span class="dyn-risk ' + lvl + '">' + dyn.risk + '风险</span>';
+      }
+      var lbl = (Array.isArray(dyn.labels) && dyn.labels.length) ? ' 〔' + dyn.labels.join('/') + '〕' : '';
+      dh.innerHTML = '🧭 ' + (parts.join(' ｜ ') || '动力学平稳') + riskTag + (lbl ? '<span class="dyn-lbl">' + lbl + '</span>' : '');
+      wrap.appendChild(dh);
+      if (dyn.note) {
+        var dn = document.createElement('div');
+        dn.className = 'dyn-note';
+        dn.textContent = dyn.note;
+        wrap.appendChild(dn);
+      }
+    }
+
+    // 接话逻辑（治"前后不通"）
+    if (res.thread) {
+      var th = document.createElement('div');
+      th.className = 'thread-line';
+      th.innerHTML = '🔗 接话逻辑：' + res.thread;
+      wrap.appendChild(th);
     }
 
     // 三档话术
