@@ -321,7 +321,7 @@
       var reqId = 'r' + (++reqSeq);
       var timer = setTimeout(function () {
         if (waiters[reqId]) { delete waiters[reqId]; reject(new Error('timeout')); }
-      }, maxTokens ? 90000 : 45000);
+      }, maxTokens ? 150000 : 120000);   // hy3 有 reasoning 开销(reasoning_tokens≈2100)，给足时间
       waiters[reqId] = function (result) { clearTimeout(timer); resolve(result); };
       var payload = {
         model_id: modelId, messages: messages, temperature: temperature == null ? 0.85 : temperature
@@ -346,6 +346,108 @@
   }
 
   // ---------- 结构归一化：兼容旧{reply,analysis,mindset}与新{stage,read,options} ----------
+  // ---------- 话术质量闸门 ----------
+  // 模型（尤其 glm-4-flash）会偷懒：then 写成"告诉她剧名"这类说明、text 里塞占位符、
+  // 三档开头一模一样。这里做代码级校验，不合格就把问题回喂给模型让它重写一次。
+  function cleanField(s) {
+    if (!s) return '';
+    s = String(s).trim();
+    // 去掉模型爱加的包装词
+    s = s.replace(/^(那你就接|那你就|你就接|你就说|你可以说|建议回复|回复)\s*[：:]\s*/, '');
+    // 剥掉占位符尖括号内容（模型会把模板原样抄回来）
+    s = s.replace(/<[^>]*>/g, '').trim();
+    s = s.replace(/^["'“”]|["'“”]$/g, '').trim();
+    return s;
+  }
+
+  // 判"这一栏是不是在说做法而不是给原句"
+  function looksLikeInstruction(s) {
+    if (!s) return true;
+    if (s.length < 2) return true;
+    // 动词开头 + 无主语/无第一人称 → 基本是动作说明（"讲一个笑话""唱首歌给她听"）
+    if (/^(讲|说|唱|做|问|聊|发|给|带|约|分享|告诉|提出|尝试|保持|继续|开始|主动)/.test(s) &&
+        !/[我你咱]/.test(s)) return true;
+    return /告诉她|询问她|建议|可以继续|继续讨论|继续分享|展开|深入|引导|暗示|保持互动|顺着|回应她的|根据她|分享你的|提出.{0,4}话题|给对方|给她听|给她看/.test(s);
+  }
+
+  // 判"太像 AI 书面语"——旧版话术就是栽在这
+  function looksTooBookish(s) {
+    if (!s) return false;
+    // 书面连接词 / 客套腔 / 形容词堆砌
+    if (/其实|我觉得|总的来说|建议您|或许可以|不妨|首先|其次|综上|应该|可以试着|也许|想必|难道|是否|如何|一起享受|真是迷人|让人感到|令人|颇为|十分|非常/.test(s)) return true;
+    // 典型 AI 套话
+    if (/共同语言|挺有意思的|挺开心的|增加.{0,4}感|促进|增进|展现|拉近|升温/.test(s)) return true;
+    // 过长的完整句（超过 18 字且无口语词）
+    if (s.length > 18 && !/[参草噗疯真的就都懒得特妈@@啊吧呢嘛哈]/.test(s)) return true;
+    return false;
+  }
+
+  // 与锚点（她最后一句）的关联度：抽出她话里的实词，看有没有被接住
+  function anchorScore(text, lastHer) {
+    if (!text || !lastHer) return 0;
+    var chars = [];
+    var src = String(lastHer).replace(/[，。！？、\s~～…\-—""''「」]/g, '');
+    for (var i = 0; i < src.length; i++) {
+      var c = src.charAt(i);
+      if (/[\u4e00-\u9fa5A-Za-z0-9]/.test(c)) chars.push(c);
+    }
+    if (!chars.length) return 0;
+    var hit = 0;
+    chars.forEach(function (c) { if (text.indexOf(c) >= 0) hit++; });
+    var ratio = hit / chars.length;
+
+    // 她的话很短的通用应答（"嗯""哦""再说吧""随便"）→ 字面命中率没意义，
+    // 必须靠"语义接住"判：出现回应动作词，或明确提到她的原词
+    var blunt = /^(嗯+|哦+|好+|行+|随便|再说吧|再说|不知道|没事|呵呵|哈+|是吗|算了)$/.test(String(lastHer).trim());
+    if (blunt) {
+      // 必须真的提她的词，或有明确的回应动作
+      var echos = /再说|再说吧|嗯|哦|随便|算了|行吧|改天|那先|那算了/.test(text);
+      var reaction = /那我|你忙|不急|等你|回头|想好了|什么时候/.test(text);
+      return (ratio >= 0.5 || echos) ? Math.max(ratio, 0.6) : (reaction ? 0.4 : 0);
+    }
+
+    // 一般情况：字面命中 或 反问/回应动作
+    var semantic = /[？?]|我说|我猜|你猜|你说呢|那你说/.test(text) ? 0.5 : 0;
+    return Math.max(ratio, semantic);
+  }
+
+  // 三档是否雷同：取前 6 字比较
+  function tooSimilar(opts) {
+    var heads = opts.map(function (o) { return (o.text || '').slice(0, 6); });
+    for (var i = 0; i < heads.length; i++) {
+      for (var j = i + 1; j < heads.length; j++) {
+        if (heads[i] && heads[i] === heads[j]) return true;
+      }
+    }
+    return false;
+  }
+
+  // 返回 null 表示合格；否则返回问题描述（用于回喂给模型）
+  function auditResult(res, lastHer) {
+    var opts = (res && res.options) || [];
+    if (opts.length < 3) return '必须给满三档（稳/撩/撤）';
+    var problems = [];
+    opts.forEach(function (o, i) {
+      var label = o.tone || ('第' + (i + 1) + '档');
+      if (!o.text) problems.push(label + ' 的 text 是空的');
+      else if (o.text.length > 25) problems.push(label + ' 太长（' + o.text.length + '字），压到 20 字内');
+      else if (looksLikeInstruction(o.text)) problems.push(label + ' 的 text 写成了做法说明，要直接是能发出的原句');
+      else if (looksTooBookish(o.text)) problems.push(label + ' 太书面/AI 腔了，改成短句口语（可用 参/@@/反问）');
+      if (looksLikeInstruction(o.then)) problems.push(label + ' 的 then 写成了说明，必须直接给下一句原话');
+      else if (o.then && o.then.length > 25) problems.push(label + ' 的 then 太长，压到 20 字内');
+      // then 不能是 text 的复读（模型凑数时会把上一句抄一遍）
+      else if (o.then && o.text && o.then.replace(/[，。！？、\s]/g, '') === o.text.replace(/[，。！？、\s]/g, ''))
+        problems.push(label + ' 的 then 和 text 一模一样，then 应该是她回完之后你说的新一句');
+    });
+    if (tooSimilar(opts)) problems.push('三档话术开头雷同，必须真正三档不同力度');
+    // 至少两档要跟她最后一句有明确关联
+    var related = opts.filter(function (o) { return anchorScore(o.text, lastHer) >= 0.34; }).length;
+    if (lastHer && related < 2) problems.push('话术没接住她最后那句「' + lastHer + '」，必须明显回应它');
+    // stage 不许塞散文
+    if (res.stage && !/A吸引|C舒适|S诱惑/.test(res.stage)) problems.push('stage 只能是 A吸引/C舒适/S诱惑');
+    return problems.length ? problems.join('；') : null;
+  }
+
   function normalize(r) {
     r = r || {};
     var out = {
@@ -358,16 +460,22 @@
     if (Array.isArray(r.options) && r.options.length) {
       out.options = r.options.slice(0, 3).map(function (o, i) {
         return {
-          tone: o.tone || ['稳', '撩', '撤'][i] || '稳',
-          text: o.text || '',
+          tone: (function (t) {
+            // 归一化 tone：模型爱写"轻松/好奇/直接"，强制拉回稳定三档
+            if (!t) return ['稳', '撩', '撤'][i] || '稳';
+            if (/撩|进|张力|主动/.test(t)) return '撩';
+            if (/撤|退|冷|降/.test(t)) return '撤';
+            return '稳';
+          })(o.tone),
+          text: cleanField(o.text),
           why: o.why || '',
           predict: o.predict || '',
-          then: o.then || ''
+          then: cleanField(o.then)
         };
       });
     } else if (r.reply) {
       // 旧格式 / 离线兜底 → 包成单条「稳」
-      out.options = [{ tone: '稳', text: r.reply, why: r.analysis || '', predict: '', then: '' }];
+      out.options = [{ tone: '稳', text: cleanField(r.reply), why: r.analysis || '', predict: '', then: '' }];
       out.read = r.mindset || out.read;
     }
     if (!out.read && r.analysis) out.read = r.analysis;
@@ -381,7 +489,7 @@
       { role: 'system', content: window.WZ_STAGE_PROMPT },
       { role: 'user', content: taggedLog.slice(-6000) }
     ];
-    return askLLM(modelId, msgs, 0.3)
+    return askLLM(modelId, msgs, 0.3, 3000)
       .then(function (res) {
         if (!res || !res.ok) return null;
         return parseContent(res.content);
@@ -412,9 +520,9 @@
     var stage = confirmedStage || $('stage').value || '';
     var goal = $('goal').value || '';
     var useStyle = $('useStyle').checked;
-    var modelId = $('model').value || 'auto';
+    var modelId = resolveModel($('model').value || 'auto');
     localStorage.setItem(LS_STYLE, useStyle ? '1' : '0');
-    localStorage.setItem(LS_MODEL, modelId);
+    localStorage.setItem(LS_MODEL, $('model').value || 'auto');
     localStorage.setItem(LS_HER, herName);
 
     var tagged = '';
@@ -453,13 +561,62 @@
         render(off);
         return;
       }
-      return askLLM(modelId, messages, 0.85)
+      // 锚点：她最后一句（质量闸门要用它判断话术有没有接住）
+      var lastHer = '';
+      if (p && p.turns && p.turns.length) {
+        for (var li = p.turns.length - 1; li >= 0; li--) {
+          if (p.turns[li].who === 'her' && p.turns[li].text) { lastHer = p.turns[li].text; break; }
+        }
+      }
+      if (!lastHer && message) lastHer = message;
+
+      return askLLM(modelId, messages, 0.85, 6000)
         .then(function (result) {
           if (!result || !result.ok) throw new Error(result && result.error ? result.error : 'llm-failed');
           var data = parseContent(result.content);
           if (!data || (!data.options && !data.reply)) throw new Error('empty-reply');
-          data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
-          render(data);
+
+          // 质量闸门：不合格 → 把具体问题回喂给模型重写一次
+          var issue = auditResult(normalize(data), lastHer);
+          if (!issue) {
+            data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
+            render(data);
+            return null;
+          }
+          var retryMsgs = messages.concat([
+            { role: 'assistant', content: result.content },
+            {
+              role: 'user',
+              content: '刚才的输出不合格，问题：\n- ' + issue +
+                '\n\n请重写，只输出修正后的 JSON。特别注意：' +
+                '① then 必须是能直接发出去的一句原话，不许写"告诉她…""继续讨论…"这类说明；' +
+                '② 三条 text 必须真正不同力度，不许同一句换皮；' +
+                '③ 每条都要明显接住她最后那句「' + lastHer + '」；' +
+                '④ text 控制在 20 字内、口语。'
+            }
+          ]);
+          return askLLM(modelId, retryMsgs, 0.9, 6000)
+            .then(function (r2) {
+              var d2 = (r2 && r2.ok) ? parseContent(r2.content) : null;
+              if (d2 && (d2.options || d2.reply)) {
+                // 二次仍然不合格也照发，但把问题标出来，让用户知道该改哪里
+                var still = auditResult(normalize(d2), lastHer);
+                d2.provider_label = '🌐 ' + (LABELS[r2.provider] || r2.provider || '云端');
+                if (still) d2.read = (d2.read || '') + '（提示：' + still + '）';
+                render(d2);
+                return null;
+              }
+              data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
+              data.read = (data.read || '') + '（提示：' + issue + '）';
+              render(data);
+              return null;
+            })
+            .catch(function () {
+              data.provider_label = '🌐 ' + (LABELS[result.provider] || result.provider || '云端');
+              data.read = (data.read || '') + '（提示：' + issue + '）';
+              render(data);
+              return null;
+            });
         })
         .catch(function (err) {
           var off = offlineFallback(message, stage || confirmedStage, goal, useStyle, tagged);
@@ -658,13 +815,35 @@
   }
 
   // ---------- 模型下拉 ----------
+  // ---------- 模型选择 ----------
+  // 「自动」不再交给原生 default_model（那是 glm-4-flash，话术质量明显偏弱），
+  // 改为 H5 侧自己挑：按能力优先级找第一个有密钥的模型。
+  // 实测：hy3 输出三档真正递进、then 是新句子、dont 贴情境；glm-4-flash 三档雷同、then 写说明。
+  var MODEL_PRIORITY = ['tencent-hy3', 'deepseek-chat', 'zhipu-glm'];
+  var availableModels = null;   // [{id, enabled}]
+
+  function resolveModel(modelId) {
+    if (modelId && modelId !== 'auto') return modelId;
+    if (!hasBridge) return modelId || 'auto';
+    if (!availableModels) {
+      try { availableModels = JSON.parse(Android.getEnabledModels() || '[]'); } catch (e) { availableModels = []; }
+    }
+    for (var i = 0; i < MODEL_PRIORITY.length; i++) {
+      var id = MODEL_PRIORITY[i];
+      var hit = availableModels.filter(function (m) { return m.id === id && m.enabled; })[0];
+      if (hit) return id;
+    }
+    return 'zhipu-glm';   // 都不可用时的兜底（原生会报未配置密钥）
+  }
+
   function loadModels() {
     var sel = $('model');
     var saved = localStorage.getItem(LS_MODEL) || 'auto';
-    var opts = [{ id: 'auto', label: '自动（推荐）' }];
+    var opts = [{ id: 'auto', label: '自动（优先混元 hy3）' }];
     if (hasBridge) {
       try {
         var enabled = JSON.parse(Android.getEnabledModels() || '[]');
+        availableModels = enabled;
         enabled.forEach(function (m) {
           var label = LABELS[m.id] || m.id;
           if (!m.enabled) label = '⚠ ' + label + '（无密钥）';
