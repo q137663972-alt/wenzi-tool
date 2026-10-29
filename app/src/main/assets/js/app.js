@@ -41,14 +41,15 @@
     var her = lines('herLog'), me = lines('meLog');
     if (!her.length && !me.length) return null;
 
-    // 两窗按"各记各的"录入时无法知道真实先后，取较短一侧的长度做上限，
-    // 然后交替拼成时间线（他一句她一句是最常见的聊天节奏）。
+    // 两窗按"各记各的"录入时无法知道真实先后——但本工具的核心目的是「用户回她」，
+    // 所以默认按「我先说、她后回」拼：时间线以她的消息收尾，使「最后一句=她的」与锚点
+    // 一致，模型就不会顺着时间线去补「她」的话（治「话术站在对方立场」）。
+    // 真实先后若不是这样，用聊天窗的 ▲▼ 手动调即可。
     var turns = [], n = Math.max(her.length, me.length);
     var hi = 0, mi = 0;
-    // 第一条归属：看哪边先有内容且"她"通常先开口 —— 但更稳的是：谁多谁后
     for (var k = 0; k < n; k++) {
-      if (hi < her.length) turns.push({ who: 'her', text: her[hi++], guessed: false });
       if (mi < me.length) turns.push({ who: 'me', text: me[mi++], guessed: false });
+      if (hi < her.length) turns.push({ who: 'her', text: her[hi++], guessed: false });
     }
     return { turns: turns, confidence: 100, stats: { total: turns.length, explicit: turns.length, dual: 1 } };
   }
@@ -663,24 +664,32 @@
 
   function buildUserContent(message, tagged, herName, turns) {
     var s = '';
+    // —— 视角铁律：专门治「话术站在对方立场」——
+    // 双窗合并的时间线最后一条可能是「我」自己之前说的，模型容易顺着时间线去补「她」的回复。
+    // 这里把话说死：话术永远替「我」想，回复对象永远是下方锚点（她最后一句）。
+    s += '【视角铁律】你是「军师」，只替【我】（用户本人）想接下来要发出去的那一句。\n'
+      + '话术永远是【我】发给【她】的消息，绝不能写成【她】会说的那种话，也绝不替【她】接话/补话。\n'
+      + '注意：聊天记录里【最后一条可能是「我」自己刚说的】，这不代表你要去补「她」的回复；'
+      + '你要回复的对象永远是下方【锚点·她最后一句】。\n\n';
     if (tagged) {
       s += '【聊天记录（已标注说话人，我=用户本人，' + herName + '=对方）】\n' + tagged + '\n\n';
     }
     // 锚点：最近 3 回合 + 她最后一句，确保话术接得住上文（治"前后不通"）
     if (turns && turns.length) {
       var recent = turns.slice(-3);
-      s += '【最近 3 回合（从上到下，时间序）】\n';
+      s += '【最近 3 回合（从上到下，时间序，仅供理解上下文）】\n';
       recent.forEach(function (t) {
         s += (t.who === 'me' ? '我' : herName) + '：' + (t.text || '（空）') + '\n';
       });
       var lastHer = null;
       for (var i = turns.length - 1; i >= 0; i--) { if (turns[i].who === 'her') { lastHer = turns[i].text; break; } }
-      if (lastHer) s += '\n【锚点·她最后一句（话术必须先接这句）】\n' + lastHer + '\n\n';
+      if (lastHer) s += '\n【锚点·她最后一句（你要替「我」回的正是这句，话术必须先接它）】\n' + lastHer + '\n\n';
     }
     if (message) {
       s += '【当前情况/她刚说了什么（补充）】\n' + message + '\n\n';
     }
-    s += '请按 JSON 格式输出：先用 dynamics 看清这一句的动作/风险，再用 thread 写清这一轮怎么接上文，最后给三档话术（稳/撩/撤），每条带「她可能怎么回→我怎么接」，且每条 text 必须先接住她最后一句。话术必须是能直接发的成品句。';
+    s += '请按 JSON 格式输出：先用 dynamics 看清这一句的动作/风险，再用 thread 写清这一轮怎么接上文，最后给三档话术（稳/撩/撤），每条带「她可能怎么回→我怎么接」。\n'
+      + '【硬性】每条 text 都是「我」接下来要发的成品句，必须先接住【锚点·她最后一句】，且绝不能写成「她」会说的语气。话术必须是能直接发的成品句。';
     return s;
   }
 
