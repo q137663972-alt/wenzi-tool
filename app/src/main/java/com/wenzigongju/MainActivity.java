@@ -124,14 +124,24 @@ public class MainActivity extends AppCompatActivity {
                     // 丢弃 ?b=build 这类查询串
                     int q = rel.indexOf('?');
                     if (q >= 0) rel = rel.substring(0, q);
+                    // 版本门槛通过才供给热更内容，否则一律回退内置 assets
+                    boolean hotOk = hotUsable();
                     File f = new File(getFilesDir(), "hot/" + rel);
-                    if (f.isFile()) {
+                    if (hotOk && f.isFile()) {
                         try {
                             return new WebResourceResponse(guessMime(rel), "utf-8", new FileInputStream(f));
                         } catch (IOException e) {
                             Log.w(TAG, "intercept read fail: " + rel, e);
                         }
                     }
+                    // 热更未命中/未就绪 → 回退内置 assets。
+                    // 关键修复：首屏统一走 local.hot 后，首次安装（还没热更过）时
+                    // version.json / js / css 等也都能在 https 源上正常读到，
+                    // 不再出现「本地版本读不到 → H5 显示 — → 误报已是最新」的死锁。
+                    try {
+                        java.io.InputStream is = getAssets().open(rel);
+                        return new WebResourceResponse(guessMime(rel), "utf-8", is);
+                    } catch (IOException ignore) {}
                 }
                 return null;
             }
@@ -143,14 +153,12 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // 决定首屏：已有热更且版本门槛通过 → 走 local.hot；否则走内置 assets
-        boolean startWithHot = hotUsable();
-        idxExistedBefore = startWithHot;   // 供热更完成后判断是否需要自动刷新
-        if (startWithHot) {
-            webView.loadUrl("https://local.hot/index.html");
-        } else {
-            webView.loadUrl("file:///android_asset/index.html");
-        }
+        // 首屏统一走 local.hot 虚拟域（intercept 已支持 assets 回退）：
+        // 无论有没有热更，页面都在 https 源上，fetch('version.json') 等
+        // 同源读取不再被 file:// CORS 拦死。旧版从这里读不到本地版本 →
+        // 版本条显示「—」→ update.js 把「未知」误判成「已是最新」→ 热更永远装不上。
+        idxExistedBefore = hotUsable();   // 供热更完成后判断是否需要自动刷新
+        webView.loadUrl("https://local.hot/index.html");
 
         // 启动成功 3 秒后，后台静默热更新（用户零操作）
         ui.postDelayed(this::backgroundUpdate, 3000);
@@ -457,24 +465,31 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private byte[] httpGetBytes(String urlStr) {
-        try {
-            URL url = new URL(urlStr);
-            HttpURLConnection c = (HttpURLConnection) url.openConnection();
-            c.setRequestMethod("GET");
-            c.setConnectTimeout(8000);
-            c.setReadTimeout(15000);
-            c.setUseCaches(false);
-            c.setRequestProperty("Cache-Control", "no-cache");
-            c.setRequestProperty("User-Agent", "WenziTool-Update");
-            int code = c.getResponseCode();
-            if (code != 200) { c.disconnect(); return null; }
-            byte[] data = readBytes(c.getInputStream());
-            c.disconnect();
-            return data;
-        } catch (Exception e) {
-            Log.w(TAG, "httpGet fail: " + urlStr, e);
-            return null;
+        // 关键修复：旧版 connect 超时仅 8s，国内连 github.io 经常握不上手 →
+        // 静默热更每次启动都无声失败，热更永远装不上。放宽超时并重试 3 次。
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                URL url = new URL(urlStr);
+                HttpURLConnection c = (HttpURLConnection) url.openConnection();
+                c.setRequestMethod("GET");
+                c.setConnectTimeout(15000);
+                c.setReadTimeout(30000);
+                c.setUseCaches(false);
+                c.setRequestProperty("Cache-Control", "no-cache");
+                c.setRequestProperty("User-Agent", "WenziTool-Update");
+                int code = c.getResponseCode();
+                if (code != 200) { c.disconnect(); return null; }
+                byte[] data = readBytes(c.getInputStream());
+                c.disconnect();
+                return data;
+            } catch (Exception e) {
+                Log.w(TAG, "httpGet fail(try " + (attempt + 1) + "/3): " + urlStr, e);
+                if (attempt < 2) {
+                    try { Thread.sleep(800L * (attempt + 1)); } catch (InterruptedException ie) { return null; }
+                }
+            }
         }
+        return null;
     }
 
     // ---------------- JS 桥接 ----------------
@@ -517,11 +532,13 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        // 当前本地已装 H5 的 build 指纹（没有热更时返回空串）
+        // 当前本地已装 H5 的 build 指纹。没有热更时返回 builtin-<版本名>，
+        // 让 H5 能明确区分「从未热更」与「已是最新」（旧版返回空串，
+        // update.js 把空串当「已是最新」处理，热更入口被永久藏死）。
         @JavascriptInterface
         public String getLocalBuild() {
             File bf = new File(getFilesDir(), "hot/__build__");
-            if (!bf.isFile()) return "";
+            if (!bf.isFile()) return "builtin-" + versionName();
             try {
                 return new JSONObject(readFile(bf)).optString("build", "");
             } catch (Exception e) {
@@ -552,7 +569,19 @@ public class MainActivity extends AppCompatActivity {
             JSONObject req = new JSONObject(payloadJson);
             String modelId = req.optString("model_id", "auto");
             if ("auto".equals(modelId) && appConfig != null) {
-                modelId = appConfig.optString("default_model", "zhipu-glm");
+                // 与 H5 的 MODEL_PRIORITY 对齐：自动优先混元 hy3（实测 glm-4-flash
+                // 话术质量差、爱写说明文）。hy3 无密钥时才退回 default_model。
+                try {
+                    JSONObject provs = appConfig.optJSONObject("providers");
+                    JSONObject hy = provs == null ? null : provs.optJSONObject("tencent-hy3");
+                    if (hy != null && hy.optString("api_key", "").length() > 0) {
+                        modelId = "tencent-hy3";
+                    } else {
+                        modelId = appConfig.optString("default_model", "zhipu-glm");
+                    }
+                } catch (Exception ignore) {
+                    modelId = appConfig.optString("default_model", "zhipu-glm");
+                }
             }
             JSONObject prov = null;
             if (appConfig != null) {

@@ -1,8 +1,8 @@
 {
   "min_apk": 2,
-  "app": "3.2.0",
+  "app": "3.3.0",
   "sig": "local",
-  "build": "f4937f2ab3db5829",
-  "ts": "2026-10-29T06:32:56.924Z",
+  "build": "c91d1680a76d4398",
+  "ts": "2026-10-29T07:21:46.607Z",
   "manifest": "pack/manifest.json"
 }

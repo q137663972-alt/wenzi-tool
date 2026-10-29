@@ -105,8 +105,14 @@
           var finish = function (local) {
             state.localBuild = local;
             renderVersions();
-            var newer = local && local !== upd.build;
-            if (newer) {
+            // 本地版本"读不到"绝不等于"已是最新"：从没热更过的设备上
+            // hot/__build__ 与 version.json 都取不到（原生 intercept 不回退 assets），
+            // 旧逻辑在这里谎报「✅ 已是最新」，导致用户永远收不到热更。
+            if (!local) {
+              setState('⚠️ 本地版本未知（可能从未热更成功），点「立即更新」拉取最新', true);
+              return;
+            }
+            if (local !== upd.build) {
               var t = upd.ts ? '（' + String(upd.ts).slice(0, 10) + '）' : '';
               setState('🔔 发现新版本 ' + shortBuild(upd.build) + t + '，点「立即更新」即可生效', true);
             } else {
