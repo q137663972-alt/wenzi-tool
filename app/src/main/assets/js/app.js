@@ -25,6 +25,7 @@
   // ---------- 聊天记录解析状态 ----------
   var parsed = null;        // { turns, confidence, stats }
   var confirmedStage = '';  // 用户确认的阶段
+  var editedTurns = null;   // 用户在聊天窗手动调序/翻转后的 turns 快照；null=未编辑，用自动解析
 
   // ---------- 聊天窗口（她左 / 我右，微信式气泡） ----------
   // 数据来源优先级：
@@ -53,6 +54,10 @@
   }
 
   function getParsed() {
+    // 用户已在聊天窗手动调过顺序/归属 → 直接返回手动版，避免被自动解析覆盖
+    if (editedTurns) {
+      return { turns: editedTurns, confidence: 95, stats: { total: editedTurns.length, manual: 1 } };
+    }
     var rawLog = $('chatlog').value.trim();
     var dual = collectDual();
     // 优先级：截图识别 > 整段粘贴 > 双窗
@@ -75,6 +80,7 @@
     if (base && dual) base.turns = base.turns.concat(dual.turns);
     if (!base && dual) base = dual;
     parsed = base;
+    editedTurns = null;   // 内容重新解析，清除手动编辑态
     return parsed;
   }
 
@@ -101,13 +107,13 @@
     head.innerHTML = '共 <b>' + p.turns.length + '</b> 条 · 置信度 <b class="' + level + '">' + conf + '%</b> · ' + note;
     list.appendChild(head);
     for (var i = 0; i < p.turns.length; i++) {
-      list.appendChild(buildBubble(p.turns[i]));
+      list.appendChild(buildBubble(p.turns[i], i));
     }
     // 滚到底部看最新一句
     requestAnimationFrame(function () { list.scrollTop = list.scrollHeight; });
   }
 
-  function buildBubble(t) {
+  function buildBubble(t, idx) {
     var row = document.createElement('div');
     row.className = 'chat-row ' + (t.who === 'me' ? 'right' : 'left');
     if (t.who === 'me') row.className += ' right';
@@ -128,23 +134,41 @@
         t.text = v.trim();
         if (!t.text) return;
         t.guessed = false;
-        var nr = buildBubble(t);
-        row.parentNode.replaceChild(nr, row);
+        editedTurns = parsed.turns;
+        renderChatWin();
         return;
       }
       t.who = t.who === 'me' ? 'her' : 'me';
       t.guessed = false;
-      var newRow = buildBubble(t);
-      row.parentNode.replaceChild(newRow, row);
+      editedTurns = parsed.turns;
+      renderChatWin();
     };
 
     var who = document.createElement('div');
     who.className = 'chat-who';
     who.textContent = (t.who === 'me' ? '我' : ($('herName').value.trim() || '她')) + (t.guessed ? ' ?' : '');
 
+    var move = document.createElement('div');
+    move.className = 'chat-move';
+    var up = document.createElement('button'); up.type = 'button'; up.className = 'mv up'; up.textContent = '▲';
+    var dn = document.createElement('button'); dn.type = 'button'; dn.className = 'mv dn'; dn.textContent = '▼';
+    up.onclick = function (e) { e.stopPropagation(); moveTurn(idx, -1); };
+    dn.onclick = function (e) { e.stopPropagation(); moveTurn(idx, 1); };
+    move.appendChild(up); move.appendChild(dn);
     row.appendChild(bubble);
     row.appendChild(who);
+    row.appendChild(move);
     return row;
+  }
+
+  function moveTurn(idx, dir) {
+    if (!parsed || !parsed.turns) return;
+    var j = idx + dir;
+    if (j < 0 || j >= parsed.turns.length) return;
+    var arr = parsed.turns;
+    var tmp = arr[idx]; arr[idx] = arr[j]; arr[j] = tmp;
+    editedTurns = arr;
+    renderChatWin();
   }
 
   // ---------- 截图识别 ----------
@@ -910,6 +934,7 @@
     var timer = null;
     function scheduleRebuild() {
       clearTimeout(timer);
+      editedTurns = null;   // 输入框内容变了，放弃之前的手工调序/翻转
       timer = setTimeout(renderChatWin, 350);
     }
     ['chatlog', 'herLog', 'meLog'].forEach(function (id) {

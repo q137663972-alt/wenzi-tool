@@ -207,6 +207,11 @@ footer { text-align: center; color: var(--muted); font-size: 12px; margin: 28px 
 .chat-bubble.unsure { border: 1px dashed rgba(255,200,87,.55); }
 .chat-bubble:active { filter: brightness(1.15); }
 .parse-tip { font-size: 11px; color: var(--muted); margin-top: 8px; }
+.chat-move { display: flex; flex-direction: column; gap: 2px; flex: 0 0 auto; align-self: center; margin: 0 2px; }
+.chat-move .mv { width: 24px; height: 17px; font-size: 10px; line-height: 1; border: none; border-radius: 5px; background: rgba(255,255,255,.12); color: var(--text); cursor: pointer; padding: 0; }
+.chat-move .mv:active { background: rgba(255,255,255,.28); }
+.chat-row.left .chat-move { order: -1; }
+.chat-row.right .chat-move { order: 2; }
 
 /* ============ v3.1 双输入窗（她说 / 我说） ============ */
 .hint { font-size: 11px; color: var(--muted); font-weight: 400; }
